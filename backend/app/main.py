@@ -2,6 +2,8 @@ import os
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from app.schemas.ocr import OCRResult
+from app.services.document import document_service
 
 app = FastAPI(
     title="Multimodal RAG API",
@@ -26,8 +28,8 @@ class HealthStatus(BaseModel):
 async def health_check():
     return HealthStatus(status="ok", message="Multimodal RAG API is healthy")
 
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.post("/api/upload", response_model=OCRResult)
+def upload_file(file: UploadFile = File(...)):
     # Validate file type
     allowed_extensions = {".jpg", ".jpeg", ".png", ".pdf"}
     _, ext = os.path.splitext(file.filename.lower())
@@ -37,13 +39,15 @@ async def upload_file(file: UploadFile = File(...)):
             detail=f"Unsupported file type '{ext}'. Allowed types: JPG, JPEG, PNG, PDF"
         )
     
-    # Save file or process it (skeleton for Phase 1)
-    return {
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "status": "received",
-        "message": "File received successfully (skeleton endpoint)"
-    }
+    try:
+        file_bytes = file.file.read()
+        ocr_result = document_service.process_document(file_bytes, file.filename)
+        return ocr_result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process document: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
