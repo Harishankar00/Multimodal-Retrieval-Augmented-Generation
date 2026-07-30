@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
@@ -103,6 +104,16 @@ def query_document(request: QueryRequest):
             status_code=500,
             detail=f"Failed to query document: {str(e)}"
         )
+
+@app.get("/api/documents/{doc_id}/pages/{page_num}")
+def get_document_page(doc_id: str, page_num: int):
+    page_path = os.path.join(DATA_DIR, doc_id, f"page_{page_num}.png")
+    if not os.path.exists(page_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Document page image not found"
+        )
+    return FileResponse(page_path)
 
 if __name__ == "__main__":
     import uvicorn
