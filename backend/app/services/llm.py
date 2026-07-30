@@ -40,6 +40,10 @@ Answer:"""
         contents.extend(page_images)
         contents.append(prompt)
 
+        # Intercept missing API key gracefully before client initialization
+        if not settings.GEMINI_API_KEY:
+            return "⚠️ Gemini API Configuration Error: GEMINI_API_KEY environment variable is not set. Please set a valid key in your backend/.env file to enable VQA."
+
         try:
             response = self.client.models.generate_content(
                 model=settings.GEMINI_MODEL,
@@ -47,6 +51,6 @@ Answer:"""
             )
             return response.text
         except Exception as e:
-            raise RuntimeError(f"Error calling Gemini API: {str(e)}")
+            return f"⚠️ Gemini API Error: Your API key could not be authenticated, has run out of quota, or is invalid for the selected model ({settings.GEMINI_MODEL}).\n\nDetails: {str(e)}"
 
 llm_service = LLMService()
