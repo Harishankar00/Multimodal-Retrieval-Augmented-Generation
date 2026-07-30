@@ -3,9 +3,11 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
+from PIL import Image
 from app.schemas.ocr import OCRResult, OCRBlock
-from app.services.document import document_service
+from app.services.document import document_service, DATA_DIR
 from app.services.vector_db import vector_db_service
+from app.services.llm import llm_service
 
 app = FastAPI(
     title="Multimodal RAG API",
@@ -60,6 +62,46 @@ def search_document(doc_id: str, query: str, limit: int = 3):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to search document vector database: {str(e)}"
+        )
+
+class QueryRequest(BaseModel):
+    doc_id: str
+    query: str
+    limit: int = 3
+
+class QueryResponse(BaseModel):
+    answer: str
+    sources: List[OCRBlock]
+
+@app.post("/api/query", response_model=QueryResponse)
+def query_document(request: QueryRequest):
+    try:
+        # 1. Search for most relevant blocks in vector DB
+        blocks = vector_db_service.search_index(request.doc_id, request.query, top_k=request.limit)
+
+        # 2. Extract unique page numbers and load page images
+        unique_pages = sorted(list(set(block.page_number for block in blocks)))
+        
+        page_images = []
+        for page_num in unique_pages:
+            page_path = os.path.join(DATA_DIR, request.doc_id, f"page_{page_num}.png")
+            if os.path.exists(page_path):
+                page_images.append(Image.open(page_path).convert("RGB"))
+
+        # Fallback to page 1 if no pages are mapped
+        if not page_images:
+            page_1_path = os.path.join(DATA_DIR, request.doc_id, "page_1.png")
+            if os.path.exists(page_1_path):
+                page_images.append(Image.open(page_1_path).convert("RGB"))
+
+        # 3. Request LLM response
+        answer = llm_service.query_gemini(request.query, blocks, page_images)
+
+        return QueryResponse(answer=answer, sources=blocks)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to query document: {str(e)}"
         )
 
 if __name__ == "__main__":
