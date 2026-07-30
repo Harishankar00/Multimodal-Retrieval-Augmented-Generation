@@ -1,4 +1,7 @@
 import os
+import sys
+# Ensure backend directory is in the python path for direct file execution
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -96,7 +99,7 @@ def query_document(request: QueryRequest):
                 page_images.append(Image.open(page_1_path).convert("RGB"))
 
         # 3. Request LLM response
-        answer = llm_service.query_gemini(request.query, blocks, page_images)
+        answer = llm_service.query_llm(request.query, blocks, page_images)
 
         return QueryResponse(answer=answer, sources=blocks)
     except Exception as e:
