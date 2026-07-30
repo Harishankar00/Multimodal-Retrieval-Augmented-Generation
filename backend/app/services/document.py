@@ -5,6 +5,7 @@ import fitz
 from typing import List, Tuple
 from app.schemas.ocr import OCRResult, OCRBlock
 from app.services.ocr import ocr_service
+from app.services.vector_db import vector_db_service
 
 # Define storage directory for processed documents
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -79,6 +80,9 @@ class DocumentService:
         result_json_path = os.path.join(doc_dir, "ocr_results.json")
         with open(result_json_path, "w", encoding="utf-8") as f:
             json.dump(ocr_result.model_dump(), f, ensure_ascii=False, indent=2)
+
+        # Build the vector database index
+        vector_db_service.create_index(doc_id, ocr_result.blocks)
 
         return ocr_result
 

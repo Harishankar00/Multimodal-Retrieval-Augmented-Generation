@@ -2,8 +2,10 @@ import os
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from app.schemas.ocr import OCRResult
+from typing import List
+from app.schemas.ocr import OCRResult, OCRBlock
 from app.services.document import document_service
+from app.services.vector_db import vector_db_service
 
 app = FastAPI(
     title="Multimodal RAG API",
@@ -47,6 +49,17 @@ def upload_file(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process document: {str(e)}"
+        )
+
+@app.get("/api/search", response_model=List[OCRBlock])
+def search_document(doc_id: str, query: str, limit: int = 3):
+    try:
+        results = vector_db_service.search_index(doc_id, query, top_k=limit)
+        return results
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to search document vector database: {str(e)}"
         )
 
 if __name__ == "__main__":
