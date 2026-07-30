@@ -79,7 +79,7 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
                       className="source-pill"
                       onClick={() => handleSourceClick(src)}
                     >
-                      📄 Page {src.page_number}: "{src.text.slice(0, 40)}..."
+                      Page {src.page_number}: "{src.text.slice(0, 40)}..."
                     </div>
                   ))}
                 </div>

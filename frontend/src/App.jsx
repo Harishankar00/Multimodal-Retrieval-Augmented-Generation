@@ -93,7 +93,7 @@ export default function App() {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
       <header className="app-header">
         <div className="app-logo">
-          📄 <span>Multimodal RAG VQA</span>
+          <span>Multimodal RAG VQA</span>
         </div>
         
         {docId && (
@@ -127,7 +127,7 @@ export default function App() {
                     background: isDragOver ? "var(--bg-tertiary)" : "var(--bg-secondary)"
                   }}
                 >
-                  <div className="upload-icon">📥</div>
+                  <div style={{ fontSize: "32px", color: "var(--color-accent)", marginBottom: "16px" }}>+</div>
                   <div className="upload-title">Drag & drop your document here</div>
                   <div className="upload-desc">Supports PDF, PNG, JPG, JPEG</div>
                   <input
@@ -140,7 +140,7 @@ export default function App() {
                 </div>
                 {error && (
                   <div style={{ color: "#ef4444", marginTop: "16px", fontSize: "14px" }}>
-                    ⚠️ {error}
+                    Error: {error}
                   </div>
                 )}
               </>
