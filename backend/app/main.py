@@ -71,6 +71,15 @@ def get_chats(user_id: str = Depends(get_current_user)):
             d["chat_id"] = doc.id
             if "created_at" in d and d["created_at"]:
                 d["created_at"] = d["created_at"].isoformat()
+            
+            # Fetch subcollection documents
+            docs_list = []
+            sub_docs = chats_ref.document(doc.id).collection("documents").stream()
+            for sd in sub_docs:
+                s_dict = sd.to_dict()
+                s_dict["doc_id"] = sd.id
+                docs_list.append(s_dict)
+            d["uploaded_documents"] = docs_list
             chats.append(d)
         return chats
     except Exception as e:
@@ -206,23 +215,45 @@ def query_document(request: QueryRequest, user_id: str = Depends(get_current_use
         if not chat_doc.exists:
             raise HTTPException(status_code=404, detail="Chat session not found")
         
-        chat_data = chat_doc.to_dict()
-        doc_id = chat_data.get("doc_id")
-        if not doc_id:
-            raise HTTPException(status_code=400, detail="No document uploaded for this chat session")
-
-        blocks = vector_db_service.search_index(doc_id, request.query, top_k=request.limit)
-
-        unique_pages = sorted(list(set(block.page_number for block in blocks)))
+        # Get all document IDs uploaded in this chat session
+        docs_ref = chat_ref.collection("documents")
+        docs_snaps = docs_ref.stream()
+        doc_ids = [d.id for d in docs_snaps]
         
+        if not doc_ids:
+            raise HTTPException(status_code=400, detail="No documents uploaded for this chat session")
+
+        # Search across all vector indices and pool the results
+        all_blocks = []
+        for d_id in doc_ids:
+            try:
+                results = vector_db_service.search_index(d_id, request.query, top_k=request.limit)
+                # Ensure doc_id is set on each retrieved block
+                for r in results:
+                    r.doc_id = d_id
+                all_blocks.extend(results)
+            except Exception:
+                pass
+
+        # Sort the pooled blocks by confidence/relevance and select the top_k
+        all_blocks.sort(key=lambda x: x.confidence, reverse=True)
+        blocks = all_blocks[:request.limit]
+
+        # Load matching page images
         page_images = []
-        for page_num in unique_pages:
-            page_path = os.path.join(DATA_DIR, doc_id, f"page_{page_num}.png")
-            if os.path.exists(page_path):
-                page_images.append(Image.open(page_path).convert("RGB"))
+        loaded_pages = set() # Avoid loading duplicate pages for the same doc-page
+        for block in blocks:
+            b_doc_id = block.doc_id or doc_ids[0]
+            page_key = f"{b_doc_id}_page_{block.page_number}"
+            if page_key not in loaded_pages:
+                page_path = os.path.join(DATA_DIR, b_doc_id, f"page_{block.page_number}.png")
+                if os.path.exists(page_path):
+                    page_images.append(Image.open(page_path).convert("RGB"))
+                    loaded_pages.add(page_key)
 
         if not page_images:
-            page_1_path = os.path.join(DATA_DIR, doc_id, "page_1.png")
+            b_doc_id = (blocks[0].doc_id or doc_ids[0]) if blocks else doc_ids[0]
+            page_1_path = os.path.join(DATA_DIR, b_doc_id, "page_1.png")
             if os.path.exists(page_1_path):
                 page_images.append(Image.open(page_1_path).convert("RGB"))
 
@@ -253,6 +284,8 @@ def query_document(request: QueryRequest, user_id: str = Depends(get_current_use
 
         return QueryResponse(answer=answer, sources=blocks, usage=usage)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to query document: {str(e)}"

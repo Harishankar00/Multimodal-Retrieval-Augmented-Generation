@@ -69,6 +69,10 @@ class DocumentService:
             except Exception as e:
                 raise ValueError(f"Failed to process image file: {str(e)}")
 
+        # Set parent doc_id for each OCR block
+        for block in blocks:
+            block.doc_id = doc_id
+
         ocr_result = OCRResult(
             doc_id=doc_id,
             filename=filename,

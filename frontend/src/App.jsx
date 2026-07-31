@@ -9,20 +9,18 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   
-  // Chats list & active chat
+  // Chats list & active chat context
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
 
-  // Active chat document state
-  const [docId, setDocId] = useState(null);
-  const [pagesCount, setPagesCount] = useState(0);
+  // Active viewing document overlay state
+  const [viewingDoc, setViewingDoc] = useState(null);
   const [activePage, setActivePage] = useState(1);
   const [blocks, setBlocks] = useState([]);
   const [activeBlock, setActiveBlock] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [isDragOver, setIsDragOver] = useState(false);
 
   // 1. Listen to Auth State Changes
   useEffect(() => {
@@ -32,19 +30,19 @@ export default function App() {
       if (!currentUser) {
         setChats([]);
         setActiveChatId(null);
-        handleResetWorkspace();
+        setViewingDoc(null);
       }
     });
     return unsubscribe;
   }, []);
 
-  // 2. Fetch User's Chats on Login or active context
+  // 2. Fetch User's Chats on Login
   useEffect(() => {
     if (!user) return;
     loadChats();
   }, [user]);
 
-  const loadChats = async () => {
+  const loadChats = async (selectId = null) => {
     try {
       const token = await user.getIdToken();
       const response = await fetch("http://localhost:8000/api/chats", {
@@ -56,9 +54,11 @@ export default function App() {
         const chatsList = await response.json();
         setChats(chatsList);
         
-        // Select the first chat automatically if none is selected
-        if (chatsList.length > 0 && !activeChatId) {
-          selectChat(chatsList[0]);
+        // Select active chat
+        if (selectId) {
+          setActiveChatId(selectId);
+        } else if (chatsList.length > 0 && !activeChatId) {
+          setActiveChatId(chatsList[0].chat_id);
         }
       } else {
         const detail = await response.text();
@@ -70,29 +70,17 @@ export default function App() {
     }
   };
 
-  const handleResetWorkspace = () => {
-    setDocId(null);
-    setPagesCount(0);
-    setActivePage(1);
-    setBlocks([]);
-    setActiveBlock(null);
-    setError(null);
-  };
+  // 3. Load layout blocks when viewingDoc changes
+  useEffect(() => {
+    if (!viewingDoc || !activeChatId) {
+      setBlocks([]);
+      return;
+    }
 
-  const selectChat = async (chat) => {
-    setActiveChatId(chat.chat_id);
-    setError(null);
-    
-    if (chat.doc_id) {
-      setDocId(chat.doc_id);
-      setPagesCount(chat.pages_count);
-      setActivePage(1);
-      setActiveBlock(null);
-      setBlocks([]); // Clear before load
-      
+    const fetchBlocks = async () => {
       try {
         const token = await user.getIdToken();
-        const res = await fetch(`http://localhost:8000/api/chats/${chat.chat_id}/documents/${chat.doc_id}`, {
+        const res = await fetch(`http://localhost:8000/api/chats/${activeChatId}/documents/${viewingDoc.doc_id}`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }
@@ -104,10 +92,10 @@ export default function App() {
       } catch (err) {
         console.error("Failed to fetch document layout blocks:", err);
       }
-    } else {
-      handleResetWorkspace();
-    }
-  };
+    };
+
+    fetchBlocks();
+  }, [viewingDoc, activeChatId]);
 
   const handleCreateChat = async () => {
     if (!user) return;
@@ -132,11 +120,13 @@ export default function App() {
           doc_id: null,
           filename: null,
           pages_count: 0,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          uploaded_documents: []
         };
         setChats((prev) => [newChat, ...prev]);
         setActiveChatId(newChatId);
-        handleResetWorkspace();
+        setViewingDoc(null);
+        setError(null);
       } else {
         const detail = await response.text();
         setError(`Failed to create chat session (${response.status}): ${detail || "Token verification failed"}. Check your backend credentials.`);
@@ -164,7 +154,7 @@ export default function App() {
         setChats((prev) => prev.filter((c) => c.chat_id !== chatIdToDelete));
         if (activeChatId === chatIdToDelete) {
           setActiveChatId(null);
-          handleResetWorkspace();
+          setViewingDoc(null);
         }
       }
     } catch (err) {
@@ -203,44 +193,13 @@ export default function App() {
         throw new Error(errorData.detail || "Failed to process document");
       }
 
-      const data = await response.json();
-      setDocId(data.doc_id);
-      setPagesCount(data.pages_count);
-      setBlocks(data.blocks || []);
-      setActivePage(1);
-      setActiveBlock(null);
-      
-      // Update chat session locally in array
-      setChats((prev) => 
-        prev.map((c) => 
-          c.chat_id === activeChatId 
-            ? { ...c, doc_id: data.doc_id, filename: data.filename, pages_count: data.pages_count }
-            : c
-        )
-      );
+      // Reload chats to refresh the subcollection documents array
+      await loadChats(activeChatId);
     } catch (err) {
       console.error(err);
       setError(err.message || "An error occurred during file upload.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      handleUpload(files[0]);
     }
   };
 
@@ -258,6 +217,17 @@ export default function App() {
       console.error("Sign out error:", err);
     }
   };
+
+  const handleViewDocument = (docMeta, pageNum = 1, highlightBlock = null) => {
+    setViewingDoc(docMeta);
+    setActivePage(pageNum);
+    setActiveBlock(highlightBlock);
+  };
+
+  // Find active chat details
+  const activeChat = chats.find((c) => c.chat_id === activeChatId);
+  const activeChatDocuments = activeChat?.uploaded_documents || [];
+  const activeChatTitle = activeChatDocuments[0]?.filename || activeChat?.filename || "Untitled Chat";
 
   if (authLoading) {
     return (
@@ -279,7 +249,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ position: "relative", overflow: "hidden" }}>
       {/* 1. Left Sidebar Chat Workspace Switcher */}
       <aside className="sidebar">
         <div className="sidebar-header">
@@ -291,30 +261,39 @@ export default function App() {
         </button>
 
         <div className="sidebar-chats-list">
-          {chats.map((chat) => (
-            <div 
-              key={chat.chat_id} 
-              className={`sidebar-chat-item ${activeChatId === chat.chat_id ? "active" : ""}`}
-              onClick={() => selectChat(chat)}
-            >
-              <span style={{ 
-                overflow: "hidden", 
-                textOverflow: "ellipsis", 
-                whiteSpace: "nowrap",
-                maxWidth: "160px"
-              }}>
-                {chat.filename || "Untitled Chat"}
-              </span>
-              <button 
-                className="sidebar-chat-delete" 
-                onClick={(e) => handleDeleteChat(e, chat.chat_id)}
-                title="Delete Chat"
-                style={{ fontSize: "12px", padding: "2px 6px" }}
+          {chats.map((chat) => {
+            const chatDocs = chat.uploaded_documents || [];
+            const displayTitle = chatDocs[0]?.filename || chat.filename || "Empty Chat";
+            
+            return (
+              <div 
+                key={chat.chat_id} 
+                className={`sidebar-chat-item ${activeChatId === chat.chat_id ? "active" : ""}`}
+                onClick={() => {
+                  setActiveChatId(chat.chat_id);
+                  setViewingDoc(null);
+                  setError(null);
+                }}
               >
-                Delete
-              </button>
-            </div>
-          ))}
+                <span style={{ 
+                  overflow: "hidden", 
+                  textOverflow: "ellipsis", 
+                  whiteSpace: "nowrap",
+                  maxWidth: "160px"
+                }}>
+                  {displayTitle}
+                </span>
+                <button 
+                  className="sidebar-chat-delete" 
+                  onClick={(e) => handleDeleteChat(e, chat.chat_id)}
+                  title="Delete Chat"
+                  style={{ fontSize: "12px", padding: "2px 6px" }}
+                >
+                  Delete
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         <div className="sidebar-footer">
@@ -325,75 +304,191 @@ export default function App() {
         </div>
       </aside>
 
-      {/* 2. Main Active Chat Content Panel */}
-      <main className="main-content">
-        {!activeChatId ? (
-          <div style={{ 
-            margin: "auto", 
-            textAlign: "center", 
-            color: "var(--text-secondary)",
-            fontFamily: "var(--font-heading)",
-            maxWidth: "500px",
-            padding: "20px"
-          }}>
-            <h3>Welcome</h3>
-            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-              Click "New Chat" or select a chat session from the sidebar to get started.
-            </p>
-            {error && (
-              <div style={{ color: "#ef4444", marginTop: "24px", fontSize: "14px", border: "1px solid #fee2e2", background: "#fef2f2", padding: "12px", borderRadius: "8px" }}>
-                <strong>Configuration Notice:</strong> {error}
-              </div>
-            )}
-          </div>
-        ) : !docId ? (
-          <div className="upload-container" style={{ margin: "auto" }}>
-            {loading ? (
-              <div className="loading-overlay">
-                <div className="spinner"></div>
-                <h3 style={{ fontFamily: "var(--font-heading)" }}>Ingesting Document & Running OCR...</h3>
-                <p style={{ color: "var(--text-secondary)", fontSize: "14px" }}>
-                  This may take a moment to compute spatial text layouts.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div
-                  className="upload-dropzone"
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => document.getElementById("file-input").click()}
-                  style={{
-                    borderColor: isDragOver ? "var(--color-accent)" : "var(--border-color)",
-                    background: isDragOver ? "var(--bg-tertiary)" : "var(--bg-secondary)"
-                  }}
-                >
-                  <div style={{ fontSize: "32px", color: "var(--color-accent)", marginBottom: "16px" }}>+</div>
-                  <div className="upload-title">Drag & drop your document here</div>
-                  <div className="upload-desc">Supports PDF, PNG, JPG, JPEG</div>
-                  <input
-                    type="file"
-                    id="file-input"
-                    style={{ display: "none" }}
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={handleFileChange}
-                  />
+      {/* 2. Main Content Workspace */}
+      <div style={{ 
+        flex: 1, 
+        display: "flex", 
+        height: "100%", 
+        overflow: "hidden", 
+        position: "relative" 
+      }}>
+        {/* Chat Interface centered inside main content area */}
+        <main className="main-content" style={{ 
+          position: "relative",
+          marginRight: viewingDoc ? "50%" : "0%",
+          transition: "margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+        }}>
+          {!activeChatId ? (
+            <div style={{ 
+              margin: "auto", 
+              textAlign: "center", 
+              color: "var(--text-secondary)",
+              fontFamily: "var(--font-heading)",
+              maxWidth: "500px",
+              padding: "20px"
+            }}>
+              <h3>Welcome</h3>
+              <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
+                Click "New Chat" or select a chat session from the sidebar to get started.
+              </p>
+              {error && (
+                <div style={{ color: "#ef4444", marginTop: "24px", fontSize: "14px", border: "1px solid #fee2e2", background: "#fef2f2", padding: "12px", borderRadius: "8px" }}>
+                  <strong>Configuration Notice:</strong> {error}
                 </div>
-                {error && (
-                  <div style={{ color: "#ef4444", marginTop: "16px", fontSize: "14px", textAlign: "center" }}>
-                    Error: {error}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        ) : (
-          <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden" }}>
-            <div className="pane-left">
+              )}
+            </div>
+          ) : (
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              height: "100%",
+              width: "100%",
+              maxWidth: "800px",
+              margin: "0 auto",
+              padding: "0 24px"
+            }}>
+              {/* Top header listing all active documents inside the chat room */}
+              <div style={{
+                padding: "16px 0",
+                borderBottom: "1px solid var(--border-color)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-heading)" }}>
+                    {activeChatTitle}
+                  </h2>
+                  <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                    {activeChatDocuments.length} document(s) uploaded
+                  </span>
+                </div>
+                
+                {/* Trigger document upload dialog via plus trigger */}
+                <button 
+                  onClick={() => document.getElementById("doc-plus-upload").click()}
+                  className="btn-primary"
+                  style={{ fontSize: "13px", padding: "8px 16px", borderRadius: "8px", fontWeight: 600 }}
+                  disabled={loading}
+                >
+                  {loading ? "Processing..." : "+ Add Document"}
+                </button>
+                <input 
+                  type="file" 
+                  id="doc-plus-upload" 
+                  style={{ display: "none" }}
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  onChange={handleFileChange}
+                />
+              </div>
+
+              {/* List of uploaded files at top of chat */}
+              {activeChatDocuments.length > 0 && (
+                <div style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "8px",
+                  padding: "12px 0",
+                  borderBottom: "1px solid var(--border-color)"
+                }}>
+                  {activeChatDocuments.map((doc, idx) => (
+                    <div 
+                      key={idx} 
+                      style={{
+                        background: "var(--bg-secondary)",
+                        border: "1px solid var(--border-color)",
+                        borderRadius: "8px",
+                        padding: "6px 12px",
+                        fontSize: "13px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px"
+                      }}
+                    >
+                      <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {doc.filename}
+                      </span>
+                      <button 
+                        onClick={() => handleViewDocument(doc)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--color-accent)",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          fontSize: "12px",
+                          padding: 0
+                        }}
+                      >
+                        View
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Chat pane taking remaining center screen height */}
+              <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                <ChatPane
+                  chatId={activeChatId}
+                  docId={activeChatDocuments.length > 0 ? "active" : null}
+                  activeBlock={activeBlock}
+                  setActiveBlock={setActiveBlock}
+                  setActivePage={setActivePage}
+                  onViewDocument={handleViewDocument}
+                  activeChatDocuments={activeChatDocuments}
+                />
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* 3. Sliding Bounding Box Document Viewer Modal Drawer */}
+        {viewingDoc && (
+          <aside style={{
+            position: "absolute",
+            right: 0,
+            top: 0,
+            width: "50%",
+            height: "100%",
+            background: "var(--bg-secondary)",
+            borderLeft: "1px solid var(--border-color)",
+            boxShadow: "var(--shadow-lg)",
+            display: "flex",
+            flexDirection: "column",
+            zIndex: 100
+          }}>
+            <div style={{
+              padding: "16px 24px",
+              borderBottom: "1px solid var(--border-color)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "var(--bg-secondary)"
+            }}>
+              <span style={{ 
+                fontFamily: "var(--font-heading)", 
+                fontWeight: 700, 
+                fontSize: "15px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: "80%"
+              }}>
+                Viewing: {viewingDoc.filename}
+              </span>
+              <button 
+                onClick={() => setViewingDoc(null)}
+                className="btn-icon"
+                style={{ width: "32px", height: "32px" }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
               <DocumentViewer
-                docId={docId}
-                pagesCount={pagesCount}
+                docId={viewingDoc.doc_id}
+                pagesCount={viewingDoc.pages_count}
                 activePage={activePage}
                 setActivePage={setActivePage}
                 blocks={blocks}
@@ -401,18 +496,9 @@ export default function App() {
                 setActiveBlock={setActiveBlock}
               />
             </div>
-            <div className="pane-right">
-              <ChatPane
-                chatId={activeChatId}
-                docId={docId}
-                activeBlock={activeBlock}
-                setActiveBlock={setActiveBlock}
-                setActivePage={setActivePage}
-              />
-            </div>
-          </div>
+          </aside>
         )}
-      </main>
+      </div>
     </div>
   );
 }

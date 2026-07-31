@@ -51,6 +51,9 @@ def test_vector_db_indexing_and_searching():
         os.rmdir(doc_dir)
 
 def test_search_endpoint():
+    # Ensure correct firestore mock is bound to main module for this test
+    main.firestore_db = mock_firestore
+
     # Setup firestore mock return values
     mock_chat_doc = MagicMock()
     mock_chat_doc.exists = True

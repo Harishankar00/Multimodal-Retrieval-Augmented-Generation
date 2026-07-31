@@ -21,6 +21,9 @@ main.firestore_db = mock_firestore
 client = TestClient(app)
 
 def test_query_endpoint_mocked():
+    # Ensure correct firestore mock is bound to main module for this test
+    main.firestore_db = mock_firestore
+
     # Setup firestore mock return values for active document lookup
     mock_chat_doc = MagicMock()
     mock_chat_doc.exists = True
@@ -30,6 +33,12 @@ def test_query_endpoint_mocked():
     
     mock_firestore.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_chat_ref
     mock_firestore.collection.return_value.document.return_value.collection.return_value.document.return_value.get.return_value = mock_chat_doc
+
+    # Configure mock collection documents subcollection stream
+    mock_doc_snap = MagicMock()
+    mock_docs_collection = MagicMock()
+    mock_docs_collection.stream.return_value = [mock_doc_snap]
+    mock_chat_ref.collection.return_value = mock_docs_collection
 
     # Create a dummy image
     img = Image.new("RGB", (100, 100), color="white")
@@ -47,8 +56,9 @@ def test_query_endpoint_mocked():
     assert upload_response.status_code == 200
     doc_id = upload_response.json()["doc_id"]
     
-    # Configure mock chat document to return the parsed doc_id
+    # Configure mock chat document to return the parsed doc_id and subcollection IDs
     mock_chat_doc.to_dict.return_value = {"doc_id": doc_id}
+    mock_doc_snap.id = doc_id
 
     # Mock query_llm call
     mocked_answer = "This is a mocked answer for the query."

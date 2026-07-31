@@ -38,6 +38,9 @@ def test_ocr_service_dummy_image():
     assert isinstance(blocks, list)
 
 def test_upload_endpoint_image():
+    # Ensure correct firestore mock is bound to main module for this test
+    main.firestore_db = mock_firestore
+
     # Setup firestore mock return values
     mock_chat_doc = MagicMock()
     mock_chat_doc.exists = True

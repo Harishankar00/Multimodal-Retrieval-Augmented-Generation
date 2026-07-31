@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { auth } from "../firebase";
 
-export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, setActivePage }) {
+export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, setActivePage, onViewDocument, activeChatDocuments }) {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -121,22 +121,24 @@ export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, s
     }
   };
 
-  const handleSourceClick = (block) => {
-    // Navigate viewer to the source page and highlight the bounding box
-    setActivePage(block.page_number);
-    setActiveBlock(block);
+  const handleSourceClick = (src) => {
+    const docMeta = activeChatDocuments.find(d => d.doc_id === src.doc_id);
+    if (docMeta) {
+      onViewDocument(docMeta, src.page_number, src);
+    } else if (activeChatDocuments.length > 0) {
+      onViewDocument(activeChatDocuments[0], src.page_number, src);
+    }
   };
 
   return (
     <div className="chat-container">
-      <div className="viewer-toolbar">
-        <h2 style={{ margin: 0, fontSize: "16px", fontFamily: "var(--font-heading)" }}>Interactive Chat</h2>
-      </div>
-
       <div className="chat-history">
         {messages.length === 0 ? (
-          <div style={{ margin: "auto", textAlign: "center", color: "var(--text-muted)", fontSize: "14px" }}>
-            Ask questions about the uploaded document.
+          <div style={{ margin: "auto", textAlign: "center", color: "var(--text-muted)", fontSize: "14px", maxWidth: "400px" }}>
+            {activeChatDocuments.length === 0 
+              ? "Click '+ Add Document' above to upload one or more documents, then ask questions about them here."
+              : "Ask questions about the uploaded document(s) here."
+            }
           </div>
         ) : (
           messages.map((msg, idx) => (
@@ -145,15 +147,20 @@ export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, s
               {msg.sources && msg.sources.length > 0 && (
                 <div className="sources-container">
                   <div className="source-header">Sources:</div>
-                  {msg.sources.map((src, sIdx) => (
-                    <div 
-                      key={sIdx} 
-                      className="source-pill"
-                      onClick={() => handleSourceClick(src)}
-                    >
-                      Page {src.page_number}: "{src.text.slice(0, 40)}..."
-                    </div>
-                  ))}
+                  {msg.sources.map((src, sIdx) => {
+                    const docMeta = activeChatDocuments.find(d => d.doc_id === src.doc_id);
+                    const filename = docMeta ? docMeta.filename : "document";
+                    return (
+                      <div 
+                        key={sIdx} 
+                        className="source-pill"
+                        onClick={() => handleSourceClick(src)}
+                        title={`View page ${src.page_number} of ${filename}`}
+                      >
+                        Page {src.page_number} ({filename}): "{src.text.slice(0, 30)}..."
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {msg.usage && (
@@ -217,15 +224,15 @@ export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, s
         <input
           type="text"
           className="chat-input"
-          placeholder={chatId && docId ? "Ask a question..." : !chatId ? "Select or create a chat session first" : "Please upload a document first"}
+          placeholder={chatId && activeChatDocuments.length > 0 ? "Ask a question..." : !chatId ? "Select or create a chat session first" : "Please upload a document first"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          disabled={!chatId || !docId || loading}
+          disabled={!chatId || activeChatDocuments.length === 0 || loading}
         />
         <button 
           type="submit" 
           className="btn-primary"
-          disabled={!chatId || !docId || !query.trim() || loading}
+          disabled={!chatId || activeChatDocuments.length === 0 || !query.trim() || loading}
         >
           Send
         </button>
