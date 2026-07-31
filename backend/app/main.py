@@ -259,7 +259,7 @@ def query_document(request: QueryRequest, user_id: str = Depends(get_current_use
         )
 
 @app.get("/api/documents/{doc_id}/pages/{page_num}")
-def get_document_page(doc_id: str, page_num: int, user_id: str = Depends(get_current_user)):
+def get_document_page(doc_id: str, page_num: int):
     page_path = os.path.join(DATA_DIR, doc_id, f"page_{page_num}.png")
     if not os.path.exists(page_path):
         raise HTTPException(
