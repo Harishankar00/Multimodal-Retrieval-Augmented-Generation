@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import { auth } from "../firebase";
 
 export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, setActivePage, onViewDocument, activeChatDocuments }) {
@@ -143,7 +144,9 @@ export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, s
         ) : (
           messages.map((msg, idx) => (
             <div key={idx} className={`chat-message ${msg.role} ${msg.isError ? "error" : ""}`}>
-              <div>{msg.text}</div>
+              <div className="chat-message-text">
+                <ReactMarkdown>{msg.text}</ReactMarkdown>
+              </div>
               {msg.sources && msg.sources.length > 0 && (
                 <div className="sources-container">
                   <div className="source-header">Sources:</div>

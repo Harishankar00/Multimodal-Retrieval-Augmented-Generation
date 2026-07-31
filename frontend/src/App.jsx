@@ -9,6 +9,15 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   
+  // Light/Dark Theme Switcher state
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
+
+  // Sidebar collapsible state
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Account Settings view switcher
+  const [showSettings, setShowSettings] = useState(false);
+
   // Chats list & active chat context
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -22,6 +31,12 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Apply theme dynamically to document root
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
   // 1. Listen to Auth State Changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -31,6 +46,7 @@ export default function App() {
         setChats([]);
         setActiveChatId(null);
         setViewingDoc(null);
+        setShowSettings(false);
       }
     });
     return unsubscribe;
@@ -126,6 +142,7 @@ export default function App() {
         setChats((prev) => [newChat, ...prev]);
         setActiveChatId(newChatId);
         setViewingDoc(null);
+        setShowSettings(false);
         setError(null);
       } else {
         const detail = await response.text();
@@ -224,10 +241,29 @@ export default function App() {
     setActiveBlock(highlightBlock);
   };
 
+  const getInitials = () => {
+    if (user?.displayName) return user.displayName.substring(0, 2).toUpperCase();
+    if (user?.email) return user.email.substring(0, 2).toUpperCase();
+    return "US";
+  };
+
   // Find active chat details
   const activeChat = chats.find((c) => c.chat_id === activeChatId);
   const activeChatDocuments = activeChat?.uploaded_documents || [];
   const activeChatTitle = activeChatDocuments[0]?.filename || activeChat?.filename || "Untitled Chat";
+
+  // Gather all attachments list across all chats for the settings panel
+  const allAttachments = chats.reduce((acc, c) => {
+    const docs = c.uploaded_documents || [];
+    docs.forEach(doc => {
+      acc.push({
+        ...doc,
+        chat_id: c.chat_id,
+        chat_title: docs[0]?.filename || c.filename || "Untitled Chat"
+      });
+    });
+    return acc;
+  }, []);
 
   if (authLoading) {
     return (
@@ -250,13 +286,30 @@ export default function App() {
 
   return (
     <div className="app-container" style={{ position: "relative", overflow: "hidden" }}>
-      {/* 1. Left Sidebar Chat Workspace Switcher */}
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <span className="sidebar-title">Multimodal RAG</span>
+      {/* Sidebar - Collapsible sliding container */}
+      <aside 
+        className="sidebar"
+        style={{
+          width: isSidebarCollapsed ? "0" : "260px",
+          minWidth: isSidebarCollapsed ? "0" : "260px",
+          opacity: isSidebarCollapsed ? 0 : 1,
+          overflow: "hidden",
+          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+        }}
+      >
+        <div className="sidebar-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span className="sidebar-title" style={{ whiteSpace: "nowrap" }}>Multimodal RAG</span>
+          <button 
+            onClick={() => setIsSidebarCollapsed(true)}
+            className="btn-icon"
+            style={{ border: "none", background: "transparent", fontSize: "16px", padding: 0, width: "auto", height: "auto" }}
+            title="Collapse Sidebar"
+          >
+            ◀
+          </button>
         </div>
         
-        <button className="btn-new-chat" onClick={handleCreateChat}>
+        <button className="btn-new-chat" onClick={handleCreateChat} style={{ whiteSpace: "nowrap" }}>
           New Chat
         </button>
 
@@ -268,18 +321,20 @@ export default function App() {
             return (
               <div 
                 key={chat.chat_id} 
-                className={`sidebar-chat-item ${activeChatId === chat.chat_id ? "active" : ""}`}
+                className={`sidebar-chat-item ${activeChatId === chat.chat_id && !showSettings ? "active" : ""}`}
                 onClick={() => {
                   setActiveChatId(chat.chat_id);
                   setViewingDoc(null);
+                  setShowSettings(false);
                   setError(null);
                 }}
+                style={{ whiteSpace: "nowrap" }}
               >
                 <span style={{ 
                   overflow: "hidden", 
                   textOverflow: "ellipsis", 
                   whiteSpace: "nowrap",
-                  maxWidth: "160px"
+                  maxWidth: "140px"
                 }}>
                   {displayTitle}
                 </span>
@@ -297,14 +352,57 @@ export default function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="sidebar-user-email">{user.email}</div>
-          <button className="btn-logout" onClick={handleLogout}>
-            Sign Out
-          </button>
+          {/* User Profile Capsule linking to settings dashboard */}
+          <div 
+            onClick={() => setShowSettings(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              padding: "8px 12px",
+              borderRadius: "8px",
+              cursor: "pointer",
+              background: "var(--bg-tertiary)",
+              transition: "background 0.2s",
+              border: showSettings ? "1px solid var(--color-accent)" : "1px solid transparent"
+            }}
+            title="Account Settings"
+          >
+            {user.photoURL ? (
+              <img 
+                src={user.photoURL} 
+                alt="Profile" 
+                style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }} 
+              />
+            ) : (
+              <div style={{
+                width: "32px",
+                height: "32px",
+                borderRadius: "50%",
+                background: "var(--color-accent)",
+                color: "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "13px",
+                fontWeight: 700
+              }}>
+                {getInitials()}
+              </div>
+            )}
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {user.displayName || user.email.split("@")[0]}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                Account Settings
+              </div>
+            </div>
+          </div>
         </div>
       </aside>
 
-      {/* 2. Main Content Workspace */}
+      {/* Main Content Workspace Panel */}
       <div style={{ 
         flex: 1, 
         display: "flex", 
@@ -312,20 +410,238 @@ export default function App() {
         overflow: "hidden", 
         position: "relative" 
       }}>
-        {/* Chat Interface centered inside main content area */}
-        <main className="main-content" style={{ 
-          position: "relative",
-          marginRight: viewingDoc ? "50%" : "0%",
-          transition: "margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
-        }}>
-          {!activeChatId ? (
+        {/* Floating Sidebar toggle indicator when collapsed */}
+        {isSidebarCollapsed && (
+          <button 
+            onClick={() => setIsSidebarCollapsed(false)}
+            className="btn-icon"
+            style={{
+              position: "absolute",
+              left: "16px",
+              top: "16px",
+              zIndex: 10,
+              background: "var(--bg-secondary)",
+              boxShadow: "var(--shadow-md)",
+              border: "1px solid var(--border-color)"
+            }}
+            title="Open Sidebar"
+          >
+            ☰
+          </button>
+        )}
+
+        {/* Center Main Dashboard container */}
+        <main 
+          className="main-content" 
+          style={{ 
+            position: "relative",
+            marginRight: viewingDoc ? "50%" : "0%",
+            transition: "margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+            overflowY: "auto"
+          }}
+        >
+          {showSettings ? (
+            /* Premium Settings Dashboard Screen */
+            <div style={{
+              maxWidth: "800px",
+              margin: "40px auto",
+              padding: "0 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "24px"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                <button 
+                  className="btn-icon" 
+                  onClick={() => setShowSettings(false)}
+                  style={{ width: "auto", padding: "0 14px", height: "36px" }}
+                >
+                  ← Back to Chat
+                </button>
+                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                  Account Settings
+                </h2>
+              </div>
+
+              {/* Profile Card */}
+              <div style={{
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-color)",
+                borderRadius: "12px",
+                padding: "24px",
+                display: "flex",
+                alignItems: "center",
+                gap: "24px",
+                boxShadow: "var(--shadow-sm)"
+              }}>
+                {user.photoURL ? (
+                  <img 
+                    src={user.photoURL} 
+                    alt="Profile" 
+                    style={{ width: "72px", height: "72px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--color-accent)" }} 
+                  />
+                ) : (
+                  <div style={{
+                    width: "72px",
+                    height: "72px",
+                    borderRadius: "50%",
+                    background: "var(--color-accent)",
+                    color: "#ffffff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "24px",
+                    fontWeight: 700
+                  }}>
+                    {getInitials()}
+                  </div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>
+                    {user.displayName || "Workspace User"}
+                  </div>
+                  <div style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
+                    Email: {user.email}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                    Joined: {new Date(user.metadata.creationTime).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Chat Sessions History List */}
+              <div style={{
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-color)",
+                borderRadius: "12px",
+                padding: "24px",
+                boxShadow: "var(--shadow-sm)"
+              }}>
+                <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                  Your Active Conversations ({chats.length})
+                </h3>
+                {chats.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No conversations started yet.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {chats.map((c, idx) => {
+                      const chatDocs = c.uploaded_documents || [];
+                      return (
+                        <div 
+                          key={idx}
+                          onClick={() => {
+                            setActiveChatId(c.chat_id);
+                            setShowSettings(false);
+                            setViewingDoc(null);
+                          }}
+                          style={{
+                            padding: "12px 16px",
+                            border: "1px solid var(--border-color)",
+                            borderRadius: "8px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            cursor: "pointer",
+                            transition: "background 0.2s"
+                          }}
+                          className="settings-chat-item-hover"
+                        >
+                          <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--color-accent)" }}>
+                            {chatDocs[0]?.filename || c.filename || "Empty Chat Room"}
+                          </span>
+                          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                            {chatDocs.length} attachment(s)
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Files Attached List */}
+              <div style={{
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-color)",
+                borderRadius: "12px",
+                padding: "24px",
+                boxShadow: "var(--shadow-sm)"
+              }}>
+                <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                  Attached Documents ({allAttachments.length})
+                </h3>
+                {allAttachments.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No documents uploaded yet.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {allAttachments.map((att, idx) => (
+                      <div 
+                        key={idx}
+                        style={{
+                          padding: "12px 16px",
+                          border: "1px solid var(--border-color)",
+                          borderRadius: "8px",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center"
+                        }}
+                      >
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
+                            {att.filename}
+                          </span>
+                          <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                            From Chat: {att.chat_title}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setActiveChatId(att.chat_id);
+                            handleViewDocument(att);
+                            setShowSettings(false);
+                          }}
+                          className="btn-icon"
+                          style={{ width: "auto", padding: "0 12px", height: "30px", fontSize: "12px" }}
+                        >
+                          View Bounding Boxes
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Actions list */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+                <button 
+                  onClick={handleLogout}
+                  style={{
+                    padding: "12px 24px",
+                    background: "transparent",
+                    border: "1px solid #ef4444",
+                    color: "#ef4444",
+                    borderRadius: "8px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    transition: "all 0.2s"
+                  }}
+                  className="btn-signout-red"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          ) : !activeChatId ? (
+            /* Welcome Area */
             <div style={{ 
               margin: "auto", 
               textAlign: "center", 
               color: "var(--text-secondary)",
               fontFamily: "var(--font-heading)",
               maxWidth: "500px",
-              padding: "20px"
+              padding: "20px",
+              marginTop: "100px"
             }}>
               <h3>Welcome</h3>
               <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
@@ -338,25 +654,27 @@ export default function App() {
               )}
             </div>
           ) : (
+            /* Interactive Chat Dashboard */
             <div style={{
               display: "flex",
               flexDirection: "column",
-              height: "100%",
+              minHeight: "100%",
               width: "100%",
               maxWidth: "800px",
               margin: "0 auto",
-              padding: "0 24px"
+              padding: "24px 24px 40px 24px",
+              position: "relative"
             }}>
-              {/* Top header listing all active documents inside the chat room */}
+              {/* Chat Title Area */}
               <div style={{
-                padding: "16px 0",
+                paddingBottom: "16px",
                 borderBottom: "1px solid var(--border-color)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between"
               }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-heading)" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingLeft: isSidebarCollapsed ? "44px" : "0" }}>
+                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
                     {activeChatTitle}
                   </h2>
                   <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
@@ -364,15 +682,27 @@ export default function App() {
                   </span>
                 </div>
                 
-                {/* Trigger document upload dialog via plus trigger */}
-                <button 
-                  onClick={() => document.getElementById("doc-plus-upload").click()}
-                  className="btn-primary"
-                  style={{ fontSize: "13px", padding: "8px 16px", borderRadius: "8px", fontWeight: 600 }}
-                  disabled={loading}
-                >
-                  {loading ? "Processing..." : "+ Add Document"}
-                </button>
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  {/* Sun/Moon Toggle Theme switcher */}
+                  <button 
+                    onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+                    className="btn-icon"
+                    style={{ marginRight: "12px" }}
+                    title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+                  >
+                    {theme === "light" ? "🌙" : "☀️"}
+                  </button>
+
+                  <button 
+                    onClick={() => document.getElementById("doc-plus-upload").click()}
+                    className="btn-primary"
+                    style={{ fontSize: "13px", padding: "8px 16px", borderRadius: "8px", fontWeight: 600 }}
+                    disabled={loading}
+                  >
+                    {loading ? "Processing..." : "+ Add Document"}
+                  </button>
+                </div>
+                
                 <input 
                   type="file" 
                   id="doc-plus-upload" 
@@ -382,7 +712,7 @@ export default function App() {
                 />
               </div>
 
-              {/* List of uploaded files at top of chat */}
+              {/* Uploaded files list */}
               {activeChatDocuments.length > 0 && (
                 <div style={{
                   display: "flex",
@@ -402,10 +732,11 @@ export default function App() {
                         fontSize: "13px",
                         display: "flex",
                         alignItems: "center",
-                        gap: "12px"
+                        gap: "12px",
+                        boxShadow: "var(--shadow-sm)"
                       }}
                     >
-                      <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>
                         {doc.filename}
                       </span>
                       <button 
@@ -427,8 +758,8 @@ export default function App() {
                 </div>
               )}
 
-              {/* Chat pane taking remaining center screen height */}
-              <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+              {/* Scrollable Chat feed container */}
+              <div style={{ flex: 1 }}>
                 <ChatPane
                   chatId={activeChatId}
                   docId={activeChatDocuments.length > 0 ? "active" : null}
@@ -443,7 +774,7 @@ export default function App() {
           )}
         </main>
 
-        {/* 3. Sliding Bounding Box Document Viewer Modal Drawer */}
+        {/* Sliding Bounding Box Document Viewer Modal Drawer */}
         {viewingDoc && (
           <aside style={{
             position: "absolute",
@@ -473,7 +804,8 @@ export default function App() {
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                maxWidth: "80%"
+                maxWidth: "80%",
+                color: "var(--text-primary)"
               }}>
                 Viewing: {viewingDoc.filename}
               </span>
