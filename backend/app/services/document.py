@@ -19,19 +19,19 @@ class DocumentService:
         return doc_dir
 
     @classmethod
-    def process_document(cls, file_bytes: bytes, filename: str) -> OCRResult:
+    def process_document(cls, file_bytes: bytes, filename: str, on_progress=None) -> OCRResult:
         doc_id = str(uuid.uuid4())
         doc_dir = cls._create_doc_dir(doc_id)
         
         _, ext = os.path.splitext(filename.lower())
         blocks: List[OCRBlock] = []
         pages_count = 0
-
+ 
         # Save raw original file
         original_file_path = os.path.join(doc_dir, f"original{ext}")
         with open(original_file_path, "wb") as f:
             f.write(file_bytes)
-
+ 
         if ext == ".pdf":
             try:
                 pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -50,6 +50,10 @@ class DocumentService:
                     # Run OCR
                     page_blocks = ocr_service.extract_text(img_bytes, page_number=page_idx + 1)
                     blocks.extend(page_blocks)
+
+                    # Trigger progress updates
+                    if on_progress:
+                        on_progress(page_idx + 1, pages_count)
                 
                 pdf_doc.close()
             except Exception as e:
@@ -66,6 +70,10 @@ class DocumentService:
                 # Run OCR
                 page_blocks = ocr_service.extract_text(file_bytes, page_number=1)
                 blocks.extend(page_blocks)
+
+                # Trigger progress updates
+                if on_progress:
+                    on_progress(1, 1)
             except Exception as e:
                 raise ValueError(f"Failed to process image file: {str(e)}")
 

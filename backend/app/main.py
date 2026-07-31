@@ -120,6 +120,33 @@ def delete_chat(chat_id: str, user_id: str = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/chats/{chat_id}/documents/{doc_id}")
+def delete_document(chat_id: str, doc_id: str, user_id: str = Depends(get_current_user)):
+    try:
+        import shutil
+        chat_ref = firestore_db.collection("users").document(user_id).collection("chats").document(chat_id)
+        doc_ref = chat_ref.collection("documents").document(doc_id)
+        
+        # 1. Delete from Firestore document subcollection
+        doc_ref.delete()
+        
+        # 2. Update active documents list in chat metadata
+        chat_doc = chat_ref.get()
+        if chat_doc.exists:
+            chat_data = chat_doc.to_dict() or {}
+            uploaded = chat_data.get("uploaded_documents", [])
+            updated = [d for d in uploaded if d.get("doc_id") != doc_id]
+            chat_ref.update({"uploaded_documents": updated})
+            
+        # 3. Delete indexing files and visual cache pages from server disk
+        doc_dir = os.path.join(DATA_DIR, doc_id)
+        if os.path.exists(doc_dir):
+            shutil.rmtree(doc_dir)
+            
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/chats/{chat_id}/messages")
 def get_messages(chat_id: str, user_id: str = Depends(get_current_user)):
     try:
@@ -151,15 +178,23 @@ def upload_document(chat_id: str, file: UploadFile = File(...), user_id: str = D
             detail=f"Unsupported file type '{ext}'. Allowed types: JPG, JPEG, PNG, PDF"
         )
     
+    chat_ref = firestore_db.collection("users").document(user_id).collection("chats").document(chat_id)
     try:
-        file_bytes = file.file.read()
-        ocr_result = document_service.process_document(file_bytes, file.filename)
+        # Initialize progress tracker in Firestore chat metadata
+        chat_ref.update({"processing_progress": 0})
         
-        chat_ref = firestore_db.collection("users").document(user_id).collection("chats").document(chat_id)
+        def progress_callback(page_num, total_pages):
+            progress_pct = int((page_num / total_pages) * 100)
+            chat_ref.update({"processing_progress": progress_pct})
+
+        file_bytes = file.file.read()
+        ocr_result = document_service.process_document(file_bytes, file.filename, on_progress=progress_callback)
+        
         chat_ref.update({
             "doc_id": ocr_result.doc_id,
             "filename": ocr_result.filename,
-            "pages_count": ocr_result.pages_count
+            "pages_count": ocr_result.pages_count,
+            "processing_progress": None
         })
         
         # Flatten the coordinates of blocks to avoid Firestore nested array constraints
@@ -177,8 +212,28 @@ def upload_document(chat_id: str, file: UploadFile = File(...), user_id: str = D
             "blocks": serialized_blocks
         })
         
+        # Add new document to parent chat document's uploaded_documents list
+        chat_doc = chat_ref.get()
+        if chat_doc.exists:
+            chat_data = chat_doc.to_dict() or {}
+            uploaded = chat_data.get("uploaded_documents", [])
+            # Avoid duplicate uploads of the same doc_id
+            if not any(d.get("doc_id") == ocr_result.doc_id for d in uploaded):
+                uploaded.append({
+                    "doc_id": ocr_result.doc_id,
+                    "filename": ocr_result.filename,
+                    "pages_count": ocr_result.pages_count,
+                    "created_at": firestore.SERVER_TIMESTAMP
+                })
+                chat_ref.update({"uploaded_documents": uploaded})
+
         return ocr_result
     except Exception as e:
+        # Clear progress bar in case of errors
+        try:
+            chat_ref.update({"processing_progress": None})
+        except Exception:
+            pass
         import traceback
         traceback.print_exc()
         raise HTTPException(
@@ -231,21 +286,77 @@ def query_document(request: QueryRequest, user_id: str = Depends(get_current_use
         if not doc_ids:
             raise HTTPException(status_code=400, detail="No documents uploaded for this chat session")
 
-        # Search across all vector indices and pool the results
-        all_blocks = []
+        # Hybrid Search: Combine FAISS (Semantic) + Token Match (Keyword)
+        query_words = [w.strip(",.?!()\"'-").lower() for w in request.query.split()]
+        query_words = {w for w in query_words if len(w) > 2} # filter short terms/stop-words
+        
+        all_candidates = {} # map page_key -> (OCRBlock, hybrid_score)
+        
         for d_id in doc_ids:
+            # 1. Fetch FAISS vector search results
+            vector_results = []
             try:
-                results = vector_db_service.search_index(d_id, request.query, top_k=request.limit)
-                # Ensure doc_id is set on each retrieved block
-                for r in results:
-                    r.doc_id = d_id
-                all_blocks.extend(results)
+                vector_results = vector_db_service.search_index(d_id, request.query, top_k=request.limit * 2)
             except Exception:
                 pass
+                
+            # 2. Fetch all document blocks from local OCR cache for exact keyword matching
+            all_doc_blocks = []
+            ocr_cache_path = os.path.join(DATA_DIR, d_id, "ocr_results.json")
+            if os.path.exists(ocr_cache_path):
+                try:
+                    with open(ocr_cache_path, "r", encoding="utf-8") as f:
+                        cache_data = json.load(f)
+                        all_doc_blocks = cache_data.get("blocks", [])
+                except Exception:
+                    pass
+            
+            # Map doc blocks by text to calculate keyword overlap quickly
+            text_to_kw_score = {}
+            for b in all_doc_blocks:
+                b_text = b.get("text", "")
+                b_words = [w.strip(",.?!()\"'-").lower() for w in b_text.split()]
+                b_words = {w for w in b_words if len(w) > 2}
+                
+                intersection = query_words.intersection(b_words)
+                kw_score = len(intersection) / len(query_words) if query_words else 0.0
+                if kw_score > 0:
+                    text_to_kw_score[b_text] = kw_score
 
-        # Sort the pooled blocks by confidence/relevance and select the top_k
-        all_blocks.sort(key=lambda x: x.confidence, reverse=True)
-        blocks = all_blocks[:request.limit]
+            # 3. Process vector results and apply keyword boosts
+            for block in vector_results:
+                block.doc_id = d_id
+                # Semantic base score
+                base_score = block.confidence
+                
+                # Check keyword overlap
+                kw_boost = text_to_kw_score.get(block.text, 0.0)
+                hybrid_score = base_score + 0.4 * kw_boost
+                
+                block_key = f"{d_id}_{block.page_number}_{block.text}"
+                all_candidates[block_key] = (block, hybrid_score)
+                
+            # 4. Inject highly matching keyword blocks not captured by vector search
+            for b in all_doc_blocks:
+                b_text = b.get("text", "")
+                kw_score = text_to_kw_score.get(b_text, 0.0)
+                if kw_score > 0.4: # high overlap threshold
+                    block_key = f"{d_id}_{b.get('page_number')}_{b_text}"
+                    if block_key not in all_candidates:
+                        # Construct OCRBlock
+                        new_block = OCRBlock(
+                            text=b_text,
+                            confidence=0.1, # low vector confidence placeholder
+                            page_number=b.get("page_number", 1),
+                            box=[[coord for coord in pt] for pt in b.get("box", [])],
+                            doc_id=d_id
+                        )
+                        hybrid_score = 0.5 * kw_score
+                        all_candidates[block_key] = (new_block, hybrid_score)
+                        
+        # Sort candidate blocks by their hybrid scores
+        sorted_candidates = sorted(all_candidates.values(), key=lambda x: x[1], reverse=True)
+        blocks = [item[0] for item in sorted_candidates[:request.limit]]
 
         # Load matching page images
         page_images = []

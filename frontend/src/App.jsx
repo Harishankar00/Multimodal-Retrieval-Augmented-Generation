@@ -59,6 +59,18 @@ export default function App() {
     loadChats();
   }, [user]);
 
+  // Polling logic when any chat document is currently processing OCR in the backend
+  useEffect(() => {
+    const hasActiveProcessing = chats.some(c => c.processing_progress !== undefined && c.processing_progress !== null);
+    if (!hasActiveProcessing || !user) return;
+
+    const interval = setInterval(() => {
+      loadChats(activeChatId);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [chats, activeChatId, user]);
+
   const loadChats = async (selectId = null) => {
     try {
       const token = await user.getIdToken();
@@ -180,6 +192,27 @@ export default function App() {
     }
   };
 
+  const handleDeleteDocument = async (docIdToDelete) => {
+    if (!activeChatId || !user) return;
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`http://localhost:8000/api/chats/${activeChatId}/documents/${docIdToDelete}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        if (viewingDoc && viewingDoc.doc_id === docIdToDelete) {
+          setViewingDoc(null);
+        }
+        await loadChats(activeChatId);
+      }
+    } catch (err) {
+      console.error("Failed to delete document:", err);
+    }
+  };
+
   const handleUpload = async (file) => {
     if (!file || !activeChatId) return;
     
@@ -240,6 +273,47 @@ export default function App() {
     setViewingDoc(docMeta);
     setActivePage(pageNum);
     setActiveBlock(highlightBlock);
+  };
+
+  const handleExportTranscript = async () => {
+    if (!activeChatId || !user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`http://localhost:8000/api/chats/${activeChatId}/messages`, {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const history = await res.json();
+        let mdContent = `# Chat Transcript: ${activeChatTitle}\n`;
+        mdContent += `Exported: ${new Date().toLocaleString()}\n\n---\n\n`;
+        
+        history.forEach(msg => {
+          const roleName = msg.role === "user" ? "User" : "Assistant";
+          mdContent += `### **${roleName}**\n\n${msg.text}\n\n`;
+          if (msg.sources && msg.sources.length > 0) {
+            mdContent += `*Sources:*\n`;
+            msg.sources.forEach(src => {
+              mdContent += `- Page ${src.page_number} (${src.filename || "document"}): "${src.text.slice(0, 80)}..."\n`;
+            });
+            mdContent += `\n`;
+          }
+          mdContent += `---\n\n`;
+        });
+        
+        // Trigger browser download
+        const blob = new Blob([mdContent], { type: "text/markdown;charset=utf-8;" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute("download", `chat_${activeChatId}_transcript.md`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err) {
+      console.error("Failed to export transcript:", err);
+    }
   };
 
   const getInitials = () => {
@@ -619,17 +693,36 @@ export default function App() {
                             From Chat: {att.chat_title}
                           </span>
                         </div>
-                        <button
-                          onClick={() => {
-                            setActiveChatId(att.chat_id);
-                            handleViewDocument(att);
-                            setShowSettings(false);
-                          }}
-                          className="btn-icon"
-                          style={{ width: "auto", padding: "0 12px", height: "30px", fontSize: "12px" }}
-                        >
-                          View Bounding Boxes
-                        </button>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button
+                            onClick={() => {
+                              setActiveChatId(att.chat_id);
+                              handleViewDocument(att);
+                              setShowSettings(false);
+                            }}
+                            className="btn-icon"
+                            style={{ width: "auto", padding: "0 12px", height: "30px", fontSize: "12px" }}
+                          >
+                            View
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleDeleteDocument(att.doc_id);
+                            }}
+                            style={{
+                              background: "transparent",
+                              border: "1px solid #ef4444",
+                              color: "#ef4444",
+                              borderRadius: "6px",
+                              padding: "0 12px",
+                              height: "30px",
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -708,6 +801,45 @@ export default function App() {
                 </div>
                 
                 <div style={{ display: "flex", alignItems: "center" }}>
+                  {/* Realtime progress tracker bar */}
+                  {activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null && (
+                    <div style={{
+                      marginRight: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
+                      gap: "4px"
+                    }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 500 }}>
+                        OCR Processing: {activeChat.processing_progress}%
+                      </div>
+                      <div style={{
+                        width: "100px",
+                        height: "5px",
+                        background: "var(--border-color)",
+                        borderRadius: "3px",
+                        overflow: "hidden"
+                      }}>
+                        <div style={{
+                          width: `${activeChat.processing_progress}%`,
+                          height: "100%",
+                          background: "var(--color-accent)",
+                          transition: "width 0.3s ease"
+                        }}></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Export transcript button */}
+                  <button 
+                    onClick={handleExportTranscript}
+                    className="btn-icon"
+                    style={{ marginRight: "8px" }}
+                    title="Export Chat Transcript"
+                  >
+                    📤
+                  </button>
+
                   {/* Sun/Moon Toggle Theme switcher */}
                   <button 
                     onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
@@ -722,9 +854,9 @@ export default function App() {
                     onClick={() => document.getElementById("doc-plus-upload").click()}
                     className="btn-primary"
                     style={{ fontSize: "13px", padding: "8px 16px", borderRadius: "8px", fontWeight: 600 }}
-                    disabled={loading}
+                    disabled={loading || (activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null)}
                   >
-                    {loading ? "Processing..." : "+ Add Document"}
+                    {loading || (activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null) ? "Processing..." : "+ Add Document"}
                   </button>
                 </div>
                 
@@ -764,20 +896,38 @@ export default function App() {
                       <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>
                         {doc.filename}
                       </span>
-                      <button 
-                        onClick={() => handleViewDocument(doc)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "var(--color-accent)",
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          fontSize: "12px",
-                          padding: 0
-                        }}
-                      >
-                        View
-                      </button>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <button 
+                          onClick={() => handleViewDocument(doc)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "var(--color-accent)",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            fontSize: "12px",
+                            padding: 0
+                          }}
+                        >
+                          View
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteDocument(doc.doc_id)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#ef4444",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            fontSize: "14px",
+                            padding: "0 4px",
+                            lineHeight: 1
+                          }}
+                          title="Delete Document"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
