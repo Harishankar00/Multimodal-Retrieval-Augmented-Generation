@@ -5,22 +5,22 @@
   --font-heading: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
-  /* Clean Light Mode Colors */
-  --bg-primary: #f8fafc;
+  /* Cyber Amber Light Mode Colors */
+  --bg-primary: #fafaf9;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f1f5f9;
+  --bg-tertiary: #f5f5f4;
   
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-light: #3b82f6;
-  --color-accent-glow: rgba(37, 99, 235, 0.05);
+  --color-accent: #d97706;
+  --color-accent-hover: #b45309;
+  --color-accent-light: #f59e0b;
+  --color-accent-glow: rgba(217, 119, 6, 0.05);
   
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-primary: #1c1917;
+  --text-secondary: #44403c;
+  --text-muted: #878681;
   
-  --border-color: #e2e8f0;
-  --border-focus: #3b82f6;
+  --border-color: #e7e5e4;
+  --border-focus: #f59e0b;
   
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.01);
@@ -34,22 +34,22 @@
 }
 
 [data-theme="dark"] {
-  /* Sleek Dark Mode Colors */
-  --bg-primary: #0b0f19;
-  --bg-secondary: #111827;
-  --bg-tertiary: #1f2937;
+  /* Cyber Amber Dark Mode Colors */
+  --bg-primary: #0c0c0e;
+  --bg-secondary: #141416;
+  --bg-tertiary: #1e1e22;
   
-  --color-accent: #3b82f6;
-  --color-accent-hover: #60a5fa;
-  --color-accent-light: #93c5fd;
-  --color-accent-glow: rgba(59, 130, 246, 0.08);
+  --color-accent: #f59e0b;
+  --color-accent-hover: #fbbf24;
+  --color-accent-light: #fef08a;
+  --color-accent-glow: rgba(245, 158, 11, 0.08);
   
-  --text-primary: #f9fafb;
-  --text-secondary: #d1d5db;
-  --text-muted: #6b7280;
+  --text-primary: #f3f4f6;
+  --text-secondary: #a1a1aa;
+  --text-muted: #52525b;
   
-  --border-color: #374151;
-  --border-focus: #60a5fa;
+  --border-color: #27272a;
+  --border-focus: #fbbf24;
   
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.1);

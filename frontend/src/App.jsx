@@ -21,6 +21,7 @@ export default function App() {
   // Chats list & active chat context
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
+  const [sidebarSearch, setSidebarSearch] = useState("");
 
   // Active viewing document overlay state
   const [viewingDoc, setViewingDoc] = useState(null);
@@ -313,8 +314,32 @@ export default function App() {
           New Chat
         </button>
 
+        {/* Sidebar Search Input */}
+        <div style={{ padding: "0 16px 12px 16px", whiteSpace: "nowrap" }}>
+          <input
+            type="text"
+            placeholder="Search chats..."
+            value={sidebarSearch}
+            onChange={(e) => setSidebarSearch(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              fontSize: "12px",
+              borderRadius: "6px",
+              border: "1px solid var(--border-color)",
+              background: "var(--bg-primary)",
+              color: "var(--text-primary)",
+              outline: "none"
+            }}
+          />
+        </div>
+
         <div className="sidebar-chats-list">
-          {chats.map((chat) => {
+          {chats.filter((chat) => {
+            const chatDocs = chat.uploaded_documents || [];
+            const displayTitle = (chatDocs[0]?.filename || chat.filename || "Empty Chat").toLowerCase();
+            return displayTitle.includes(sidebarSearch.toLowerCase());
+          }).map((chat) => {
             const chatDocs = chat.uploaded_documents || [];
             const displayTitle = chatDocs[0]?.filename || chat.filename || "Empty Chat";
             

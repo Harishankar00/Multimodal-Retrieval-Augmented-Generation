@@ -146,4 +146,43 @@ Answer:"""
         except Exception as e:
             return f"LLM API Connection Error: Failed to connect to the model provider endpoint.\n\nDetails: {str(e)}", {}
 
+    def generate_title(self, query: str) -> str:
+        if not settings.LLM_API_KEY:
+            return "New Chat"
+        prompt = f"Summarize the following user query into a concise 3-4 word topic title. Do not include quotes, markdown bold formatting, or punctuation:\n\n{query}\n\nTitle:"
+        payload = {
+            "model": settings.LLM_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "max_tokens": 15
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.LLM_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        try:
+            url = f"{settings.LLM_API_BASE.rstrip('/')}/chat/completions"
+            response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
+            if response.status_code == 200:
+                res_data = response.json()
+                if "choices" in res_data and len(res_data["choices"]) > 0:
+                    title = res_data["choices"][0]["message"]["content"].strip()
+                    if title.startswith('"') and title.endswith('"'):
+                        title = title[1:-1]
+                    if title.startswith("'") and title.endswith("'"):
+                        title = title[1:-1]
+                    return title[:50]
+        except Exception:
+            pass
+        return "New Chat"
+
 llm_service = LLMService()

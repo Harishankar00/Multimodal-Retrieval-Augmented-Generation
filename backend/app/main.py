@@ -215,6 +215,14 @@ def query_document(request: QueryRequest, user_id: str = Depends(get_current_use
         if not chat_doc.exists:
             raise HTTPException(status_code=404, detail="Chat session not found")
         
+        # Auto-summarize a chat title on the first query
+        chat_data = chat_doc.to_dict() or {}
+        current_title = chat_data.get("filename")
+        if not current_title or current_title == "Untitled Chat":
+            new_title = llm_service.generate_title(request.query)
+            if new_title:
+                chat_ref.update({"filename": new_title})
+        
         # Get all document IDs uploaded in this chat session
         docs_ref = chat_ref.collection("documents")
         docs_snaps = docs_ref.stream()
