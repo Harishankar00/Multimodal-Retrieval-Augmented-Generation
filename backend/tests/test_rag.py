@@ -27,7 +27,7 @@ def test_query_endpoint_mocked():
 
     # 2. Mock query_llm call to avoid external API dependencies during normal tests
     mocked_answer = "This is a mocked answer for the query."
-    with patch("app.services.llm.llm_service.query_llm", return_value=mocked_answer) as mock_method:
+    with patch("app.services.llm.llm_service.query_llm", return_value=(mocked_answer, {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})) as mock_method:
         response = client.post("/api/query", json={
             "doc_id": doc_id,
             "query": "What is the total amount?",

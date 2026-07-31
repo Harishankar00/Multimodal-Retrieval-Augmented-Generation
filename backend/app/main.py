@@ -76,6 +76,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: List[OCRBlock]
+    usage: dict = None
 
 @app.post("/api/query", response_model=QueryResponse)
 def query_document(request: QueryRequest):
@@ -99,9 +100,9 @@ def query_document(request: QueryRequest):
                 page_images.append(Image.open(page_1_path).convert("RGB"))
 
         # 3. Request LLM response
-        answer = llm_service.query_llm(request.query, blocks, page_images)
+        answer, usage = llm_service.query_llm(request.query, blocks, page_images)
 
-        return QueryResponse(answer=answer, sources=blocks)
+        return QueryResponse(answer=answer, sources=blocks, usage=usage)
     except Exception as e:
         raise HTTPException(
             status_code=500,

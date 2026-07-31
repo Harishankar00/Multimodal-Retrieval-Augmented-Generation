@@ -4,6 +4,14 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [overallUsage, setOverallUsage] = useState({
+    total_tokens: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    prompt_limit: 50000,
+    completion_limit: 10000,
+    limits: null
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -35,9 +43,22 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
       const assistantMessage = {
         role: "assistant",
         text: data.answer,
-        sources: data.sources || []
+        sources: data.sources || [],
+        usage: data.usage || null
       };
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Update overall session usage metrics
+      if (data.usage) {
+        setOverallUsage((prev) => ({
+          total_tokens: prev.total_tokens + (data.usage.total_tokens || 0),
+          prompt_tokens: prev.prompt_tokens + (data.usage.prompt_tokens || 0),
+          completion_tokens: prev.completion_tokens + (data.usage.completion_tokens || 0),
+          prompt_limit: data.usage.prompt_limit || prev.prompt_limit,
+          completion_limit: data.usage.completion_limit || prev.completion_limit,
+          limits: data.usage.limits || prev.limits
+        }));
+      }
     } catch (err) {
       console.error(err);
       setMessages((prev) => [
@@ -84,16 +105,62 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
                   ))}
                 </div>
               )}
+              {msg.usage && (
+                <div style={{ 
+                  marginTop: "12px", 
+                  fontSize: "11px", 
+                  color: "var(--text-muted)", 
+                  borderTop: "1px solid var(--border-color)", 
+                  paddingTop: "8px" 
+                }}>
+                  <div>
+                    Tokens: {msg.usage.total_tokens} (Prompt: {msg.usage.prompt_tokens}, Completion: {msg.usage.completion_tokens})
+                  </div>
+                  {msg.usage.limits && msg.usage.limits.usage !== undefined && (
+                    <div style={{ marginTop: "2px" }}>
+                      OpenRouter Usage: ${msg.usage.limits.usage.toFixed(4)}
+                      {msg.usage.limits.limit !== null && ` / $${msg.usage.limits.limit}`}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))
         )}
 
         {loading && (
           <div className="chat-message assistant" style={{ fontStyle: "italic", color: "var(--text-muted)" }}>
-            Gemini is thinking...
+            Thinking...
           </div>
         )}
       </div>
+
+      {overallUsage.total_tokens > 0 && (
+        <div style={{
+          padding: "10px 24px",
+          fontSize: "12px",
+          color: "var(--text-secondary)",
+          borderTop: "1px solid var(--border-color)",
+          background: "var(--bg-secondary)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center"
+        }}>
+          <span>
+            Input: <strong>{overallUsage.prompt_tokens}/{overallUsage.prompt_limit}</strong> tokens used | Output: <strong>{overallUsage.completion_tokens}/{overallUsage.completion_limit}</strong> tokens used
+          </span>
+          {overallUsage.limits && overallUsage.limits.usage !== undefined && (
+            <span>
+              Key Remaining: <strong>
+                {overallUsage.limits.limit !== null && overallUsage.limits.limit > 0 && overallUsage.limits.limit_remaining !== null
+                  ? `$${overallUsage.limits.limit_remaining.toFixed(4)}`
+                  : `Spent $${overallUsage.limits.usage.toFixed(4)}`
+                }
+              </strong>
+            </span>
+          )}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="chat-input-bar">
         <input
