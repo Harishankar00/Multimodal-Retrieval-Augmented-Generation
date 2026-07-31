@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { auth } from "../firebase";
 
-export default function ChatPane({ docId, activeBlock, setActiveBlock, setActivePage }) {
+export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, setActivePage }) {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -8,14 +9,62 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
     total_tokens: 0,
     prompt_tokens: 0,
     completion_tokens: 0,
-    prompt_limit: 50000,
-    completion_limit: 10000,
+    prompt_limit: 131072,
+    completion_limit: 4096,
     limits: null
   });
 
+  useEffect(() => {
+    if (!chatId) {
+      setMessages([]);
+      return;
+    }
+
+    const loadHistory = async () => {
+      setLoading(true);
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch(`http://localhost:8000/api/chats/${chatId}/messages`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        if (res.ok) {
+          const history = await res.json();
+          setMessages(history);
+          
+          // Re-calculate session totals from history
+          let total = 0, prompt = 0, completion = 0, lastLimits = null;
+          history.forEach(msg => {
+            if (msg.usage) {
+              total += msg.usage.total_tokens || 0;
+              prompt += msg.usage.prompt_tokens || 0;
+              completion += msg.usage.completion_tokens || 0;
+              if (msg.usage.limits) lastLimits = msg.usage.limits;
+            }
+          });
+          setOverallUsage({
+            total_tokens: total,
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            prompt_limit: 131072,
+            completion_limit: 4096,
+            limits: lastLimits
+          });
+        }
+      } catch (err) {
+        console.error("Error loading chat history:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadHistory();
+  }, [chatId]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!query.trim() || loading || !docId) return;
+    if (!query.trim() || loading || !chatId) return;
 
     const userMessage = { role: "user", text: query };
     setMessages((prev) => [...prev, userMessage]);
@@ -23,20 +72,22 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
     setLoading(true);
 
     try {
+      const token = await auth.currentUser?.getIdToken();
       const response = await fetch("http://localhost:8000/api/query", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          doc_id: docId,
+          chat_id: chatId,
           query: userMessage.text,
           limit: 3
         })
       });
 
       if (!response.ok) {
-        throw new Error("Failed to get response from Gemini");
+        throw new Error("Failed to query the document");
       }
 
       const data = await response.json();
@@ -166,15 +217,15 @@ export default function ChatPane({ docId, activeBlock, setActiveBlock, setActive
         <input
           type="text"
           className="chat-input"
-          placeholder={docId ? "Ask a question..." : "Please upload a document first"}
+          placeholder={chatId && docId ? "Ask a question..." : !chatId ? "Select or create a chat session first" : "Please upload a document first"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          disabled={!docId || loading}
+          disabled={!chatId || !docId || loading}
         />
         <button 
           type="submit" 
           className="btn-primary"
-          disabled={!docId || !query.trim() || loading}
+          disabled={!chatId || !docId || !query.trim() || loading}
         >
           Send
         </button>

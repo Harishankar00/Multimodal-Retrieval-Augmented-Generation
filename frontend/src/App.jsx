@@ -1,8 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { auth } from "./firebase";
+import Auth from "./components/Auth";
 import DocumentViewer from "./components/DocumentViewer";
 import ChatPane from "./components/ChatPane";
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  // Chats list & active chat
+  const [chats, setChats] = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
+
+  // Active chat document state
   const [docId, setDocId] = useState(null);
   const [pagesCount, setPagesCount] = useState(0);
   const [activePage, setActivePage] = useState(1);
@@ -13,10 +24,157 @@ export default function App() {
   const [error, setError] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const handleUpload = async (file) => {
-    if (!file) return;
+  // 1. Listen to Auth State Changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+      if (!currentUser) {
+        setChats([]);
+        setActiveChatId(null);
+        handleResetWorkspace();
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // 2. Fetch User's Chats on Login or active context
+  useEffect(() => {
+    if (!user) return;
+    loadChats();
+  }, [user]);
+
+  const loadChats = async () => {
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch("http://localhost:8000/api/chats", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const chatsList = await response.json();
+        setChats(chatsList);
+        
+        // Select the first chat automatically if none is selected
+        if (chatsList.length > 0 && !activeChatId) {
+          selectChat(chatsList[0]);
+        }
+      } else {
+        const detail = await response.text();
+        setError(`Backend authorization check failed (${response.status}): ${detail || "Token verification failed"}. Please configure your backend FIREBASE_CREDENTIALS environment variable.`);
+      }
+    } catch (err) {
+      console.error("Failed to load user chats:", err);
+      setError(`Failed to connect to backend: ${err.message}`);
+    }
+  };
+
+  const handleResetWorkspace = () => {
+    setDocId(null);
+    setPagesCount(0);
+    setActivePage(1);
+    setBlocks([]);
+    setActiveBlock(null);
+    setError(null);
+  };
+
+  const selectChat = async (chat) => {
+    setActiveChatId(chat.chat_id);
+    setError(null);
     
-    // Validate extensions
+    if (chat.doc_id) {
+      setDocId(chat.doc_id);
+      setPagesCount(chat.pages_count);
+      setActivePage(1);
+      setActiveBlock(null);
+      setBlocks([]); // Clear before load
+      
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(`http://localhost:8000/api/chats/${chat.chat_id}/documents/${chat.doc_id}`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        if (res.ok) {
+          const docData = await res.json();
+          setBlocks(docData.blocks || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch document layout blocks:", err);
+      }
+    } else {
+      handleResetWorkspace();
+    }
+  };
+
+  const handleCreateChat = async () => {
+    if (!user) return;
+    const newChatId = "chat_" + Math.random().toString(36).substring(2, 11);
+    
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch("http://localhost:8000/api/chats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          chat_id: newChatId
+        })
+      });
+      
+      if (response.ok) {
+        const newChat = {
+          chat_id: newChatId,
+          doc_id: null,
+          filename: null,
+          pages_count: 0,
+          created_at: new Date().toISOString()
+        };
+        setChats((prev) => [newChat, ...prev]);
+        setActiveChatId(newChatId);
+        handleResetWorkspace();
+      } else {
+        const detail = await response.text();
+        setError(`Failed to create chat session (${response.status}): ${detail || "Token verification failed"}. Check your backend credentials.`);
+      }
+    } catch (err) {
+      console.error("Failed to create new chat session:", err);
+      setError(`Failed to create chat session: ${err.message}`);
+    }
+  };
+
+  const handleDeleteChat = async (e, chatIdToDelete) => {
+    e.stopPropagation();
+    if (!user) return;
+    
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`http://localhost:8000/api/chats/${chatIdToDelete}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      
+      if (response.ok) {
+        setChats((prev) => prev.filter((c) => c.chat_id !== chatIdToDelete));
+        if (activeChatId === chatIdToDelete) {
+          setActiveChatId(null);
+          handleResetWorkspace();
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete chat session:", err);
+    }
+  };
+
+  const handleUpload = async (file) => {
+    if (!file || !activeChatId) return;
+    
     const allowed = [".png", ".jpg", ".jpeg", ".pdf"];
     const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     if (!allowed.includes(ext)) {
@@ -31,8 +189,12 @@ export default function App() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("http://localhost:8000/api/upload", {
+      const token = await user.getIdToken();
+      const response = await fetch(`http://localhost:8000/api/chats/${activeChatId}/upload`, {
         method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        },
         body: formData
       });
 
@@ -47,6 +209,15 @@ export default function App() {
       setBlocks(data.blocks || []);
       setActivePage(1);
       setActiveBlock(null);
+      
+      // Update chat session locally in array
+      setChats((prev) => 
+        prev.map((c) => 
+          c.chat_id === activeChatId 
+            ? { ...c, doc_id: data.doc_id, filename: data.filename, pages_count: data.pages_count }
+            : c
+        )
+      );
     } catch (err) {
       console.error(err);
       setError(err.message || "An error occurred during file upload.");
@@ -80,32 +251,103 @@ export default function App() {
     }
   };
 
-  const handleReset = () => {
-    setDocId(null);
-    setPagesCount(0);
-    setActivePage(1);
-    setBlocks([]);
-    setActiveBlock(null);
-    setError(null);
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error("Sign out error:", err);
+    }
   };
 
+  if (authLoading) {
+    return (
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100vh",
+        width: "100vw",
+        background: "var(--bg-primary)"
+      }}>
+        <div className="spinner"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Auth />;
+  }
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
-      <header className="app-header">
-        <div className="app-logo">
-          <span>Multimodal RAG VQA</span>
+    <div className="app-container">
+      {/* 1. Left Sidebar Chat Workspace Switcher */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <span className="sidebar-title">Multimodal RAG</span>
         </div>
         
-        {docId && (
-          <button className="btn-primary" onClick={handleReset} style={{ height: "36px", padding: "0 16px" }}>
-            Upload New Document
-          </button>
-        )}
-      </header>
+        <button className="btn-new-chat" onClick={handleCreateChat}>
+          New Chat
+        </button>
 
-      <div className="workspace">
-        {!docId ? (
-          <div className="upload-container">
+        <div className="sidebar-chats-list">
+          {chats.map((chat) => (
+            <div 
+              key={chat.chat_id} 
+              className={`sidebar-chat-item ${activeChatId === chat.chat_id ? "active" : ""}`}
+              onClick={() => selectChat(chat)}
+            >
+              <span style={{ 
+                overflow: "hidden", 
+                textOverflow: "ellipsis", 
+                whiteSpace: "nowrap",
+                maxWidth: "160px"
+              }}>
+                {chat.filename || "Untitled Chat"}
+              </span>
+              <button 
+                className="sidebar-chat-delete" 
+                onClick={(e) => handleDeleteChat(e, chat.chat_id)}
+                title="Delete Chat"
+                style={{ fontSize: "12px", padding: "2px 6px" }}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-user-email">{user.email}</div>
+          <button className="btn-logout" onClick={handleLogout}>
+            Sign Out
+          </button>
+        </div>
+      </aside>
+
+      {/* 2. Main Active Chat Content Panel */}
+      <main className="main-content">
+        {!activeChatId ? (
+          <div style={{ 
+            margin: "auto", 
+            textAlign: "center", 
+            color: "var(--text-secondary)",
+            fontFamily: "var(--font-heading)",
+            maxWidth: "500px",
+            padding: "20px"
+          }}>
+            <h3>Welcome</h3>
+            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
+              Click "New Chat" or select a chat session from the sidebar to get started.
+            </p>
+            {error && (
+              <div style={{ color: "#ef4444", marginTop: "24px", fontSize: "14px", border: "1px solid #fee2e2", background: "#fef2f2", padding: "12px", borderRadius: "8px" }}>
+                <strong>Configuration Notice:</strong> {error}
+              </div>
+            )}
+          </div>
+        ) : !docId ? (
+          <div className="upload-container" style={{ margin: "auto" }}>
             {loading ? (
               <div className="loading-overlay">
                 <div className="spinner"></div>
@@ -139,7 +381,7 @@ export default function App() {
                   />
                 </div>
                 {error && (
-                  <div style={{ color: "#ef4444", marginTop: "16px", fontSize: "14px" }}>
+                  <div style={{ color: "#ef4444", marginTop: "16px", fontSize: "14px", textAlign: "center" }}>
                     Error: {error}
                   </div>
                 )}
@@ -147,7 +389,7 @@ export default function App() {
             )}
           </div>
         ) : (
-          <>
+          <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden" }}>
             <div className="pane-left">
               <DocumentViewer
                 docId={docId}
@@ -161,15 +403,16 @@ export default function App() {
             </div>
             <div className="pane-right">
               <ChatPane
+                chatId={activeChatId}
                 docId={docId}
                 activeBlock={activeBlock}
                 setActiveBlock={setActiveBlock}
                 setActivePage={setActivePage}
               />
             </div>
-          </>
+          </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }

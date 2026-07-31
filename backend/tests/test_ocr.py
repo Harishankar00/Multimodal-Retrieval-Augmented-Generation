@@ -7,8 +7,17 @@ from fastapi.testclient import TestClient
 # Ensure backend root is in python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.main import app
+from app.main import app, get_current_user
 from app.services.ocr import ocr_service
+from app import main
+from unittest.mock import MagicMock
+
+# Bypass Firebase authentication in unit tests
+app.dependency_overrides[get_current_user] = lambda: "test_user_123"
+
+# Mock Firestore Client globally for tests
+mock_firestore = MagicMock()
+main.firestore_db = mock_firestore
 
 client = TestClient(app)
 
@@ -29,6 +38,11 @@ def test_ocr_service_dummy_image():
     assert isinstance(blocks, list)
 
 def test_upload_endpoint_image():
+    # Setup firestore mock return values
+    mock_chat_doc = MagicMock()
+    mock_chat_doc.exists = True
+    mock_firestore.collection.return_value.document.return_value.collection.return_value.document.return_value = MagicMock()
+
     # Create a simple image to upload
     img = Image.new("RGB", (100, 100), color="white")
     img_bytes_io = io.BytesIO()
@@ -36,7 +50,11 @@ def test_upload_endpoint_image():
     img_bytes = img_bytes_io.getvalue()
 
     files = {"file": ("test.png", img_bytes, "image/png")}
-    response = client.post("/api/upload", files=files)
+    response = client.post(
+        "/api/chats/test_chat_123/upload", 
+        files=files,
+        headers={"Authorization": "Bearer dummy_token"}
+    )
     
     assert response.status_code == 200
     data = response.json()
