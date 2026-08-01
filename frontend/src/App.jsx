@@ -1204,20 +1204,20 @@ export default function App() {
                     <button 
                       onClick={handleShareChat}
                       className="btn-icon"
-                      style={{ marginRight: "8px" }}
+                      style={{ marginRight: "8px", width: "auto", padding: "0 12px", fontSize: "12px", fontWeight: 600 }}
                       title="Share Conversation"
                     >
-                      🔗
+                      Share
                     </button>
 
                     {/* Export transcript button */}
                     <button 
                       onClick={handleExportTranscript}
                       className="btn-icon"
-                      style={{ marginRight: "8px" }}
+                      style={{ marginRight: "8px", width: "auto", padding: "0 12px", fontSize: "12px", fontWeight: 600 }}
                       title="Export Chat Transcript"
                     >
-                      📤
+                      Export
                     </button>
 
                     {/* Sun/Moon Toggle Theme switcher */}

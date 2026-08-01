@@ -501,10 +501,7 @@ def share_chat(chat_id: str, user_id: str = Depends(get_current_user)):
             d = doc.to_dict()
             if "timestamp" in d and d["timestamp"]:
                 d["timestamp"] = d["timestamp"].isoformat()
-            if "sources" in d and d["sources"]:
-                for src in d["sources"]:
-                    flat_box = src.get("box", [])
-                    src["box"] = [flat_box[i:i+2] for i in range(0, len(flat_box), 2)]
+            # Do NOT unflatten coordinates here to prevent Firestore nested array write constraints
             messages_list.append(d)
 
         share_id = f"share_{uuid.uuid4().hex}"
@@ -523,6 +520,8 @@ def share_chat(chat_id: str, user_id: str = Depends(get_current_user)):
             "share_url": f"http://localhost:5173/share/{share_id}"
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/shared/{share_id}")
@@ -535,8 +534,20 @@ def get_shared_chat(share_id: str):
         data = shared_doc.to_dict() or {}
         if "created_at" in data and data["created_at"]:
             data["created_at"] = data["created_at"].isoformat()
+            
+        # Unflatten block box coordinates in messages sources for frontend consumption
+        if "messages" in data and data["messages"]:
+            for msg in data["messages"]:
+                if "sources" in msg and msg["sources"]:
+                    for src in msg["sources"]:
+                        flat_box = src.get("box", [])
+                        if flat_box and isinstance(flat_box, list) and isinstance(flat_box[0], (int, float)):
+                            src["box"] = [flat_box[i:i+2] for i in range(0, len(flat_box), 2)]
+                            
         return data
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
