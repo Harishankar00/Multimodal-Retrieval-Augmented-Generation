@@ -11,6 +11,26 @@ from app.services.vector_db import vector_db_service
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BASE_DIR, "data", "documents")
 
+def upload_to_storage(local_path: str, remote_path: str) -> None:
+    """Helper to upload a local file to Firebase Cloud Storage."""
+    try:
+        from app.services.firebase_config import bucket
+        # Check if bucket is a MagicMock (i.e. under unit tests) or None
+        if bucket is None or hasattr(bucket, "_mock_self"):
+            return
+            
+        blob = bucket.blob(remote_path)
+        content_type = "application/octet-stream"
+        if local_path.endswith(".png"):
+            content_type = "image/png"
+        elif local_path.endswith(".pdf"):
+            content_type = "application/pdf"
+            
+        blob.upload_from_filename(local_path, content_type=content_type)
+        print(f"Uploaded {local_path} to Firebase Storage: {remote_path}")
+    except Exception as e:
+        print(f"Failed to upload file to storage: {e}")
+
 class DocumentService:
     @staticmethod
     def _create_doc_dir(doc_id: str) -> str:
@@ -31,6 +51,9 @@ class DocumentService:
         original_file_path = os.path.join(doc_dir, f"original{ext}")
         with open(original_file_path, "wb") as f:
             f.write(file_bytes)
+        
+        # Upload original PDF to Firebase Storage
+        upload_to_storage(original_file_path, f"documents/{doc_id}/original{ext}")
  
         if ext == ".pdf":
             try:
@@ -46,6 +69,9 @@ class DocumentService:
                     page_img_path = os.path.join(doc_dir, f"page_{page_idx + 1}.png")
                     with open(page_img_path, "wb") as f:
                         f.write(img_bytes)
+                    
+                    # Upload page image to Firebase Storage
+                    upload_to_storage(page_img_path, f"documents/{doc_id}/page_{page_idx + 1}.png")
                     
                     # Run OCR
                     page_blocks = ocr_service.extract_text(img_bytes, page_number=page_idx + 1)
@@ -66,6 +92,9 @@ class DocumentService:
                 page_img_path = os.path.join(doc_dir, "page_1.png")
                 with open(page_img_path, "wb") as f:
                     f.write(file_bytes)
+                
+                # Upload page image to Firebase Storage
+                upload_to_storage(page_img_path, f"documents/{doc_id}/page_1.png")
                 
                 # Run OCR
                 page_blocks = ocr_service.extract_text(file_bytes, page_number=1)

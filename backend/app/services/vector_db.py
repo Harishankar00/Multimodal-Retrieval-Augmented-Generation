@@ -1,8 +1,7 @@
 import os
 import json
-import numpy as np
-import faiss
-from sentence_transformers import SentenceTransformer
+import re
+import math
 from typing import List
 from app.schemas.ocr import OCRBlock
 
@@ -11,45 +10,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DATA_DIR = os.path.join(BASE_DIR, "data", "documents")
 
 class VectorDBService:
-    def __init__(self):
-        self._model = None
-
-    @property
-    def model(self) -> SentenceTransformer:
-        if self._model is None:
-            self._model = SentenceTransformer('all-MiniLM-L6-v2')
-        return self._model
-
     def create_index(self, doc_id: str, blocks: List[OCRBlock]) -> None:
         doc_dir = os.path.join(DATA_DIR, doc_id)
         if not os.path.exists(doc_dir):
             os.makedirs(doc_dir, exist_ok=True)
 
-        if not blocks:
-            # Handle empty blocks case (e.g. empty PDF or image with no text)
-            metadata_path = os.path.join(doc_dir, "index_metadata.json")
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump([], f)
-            return
-
-        # 1. Extract texts
-        texts = [block.text for block in blocks]
-
-        # 2. Compute embeddings
-        embeddings = self.model.encode(texts, convert_to_numpy=True)
-        embeddings = embeddings.astype('float32')
-        faiss.normalize_L2(embeddings)
-
-        # 3. Create FAISS index
-        dimension = embeddings.shape[1]
-        index = faiss.IndexFlatIP(dimension)
-        index.add(embeddings)
-
-        # 4. Save index
-        index_path = os.path.join(doc_dir, "index.faiss")
-        faiss.write_index(index, index_path)
-
-        # 5. Save metadata mapping
+        # Save metadata mapping (the text blocks themselves)
         metadata_path = os.path.join(doc_dir, "index_metadata.json")
         serialized_blocks = [block.model_dump() for block in blocks]
         with open(metadata_path, "w", encoding="utf-8") as f:
@@ -57,10 +23,9 @@ class VectorDBService:
 
     def search_index(self, doc_id: str, query: str, top_k: int = 3) -> List[OCRBlock]:
         doc_dir = os.path.join(DATA_DIR, doc_id)
-        index_path = os.path.join(doc_dir, "index.faiss")
         metadata_path = os.path.join(doc_dir, "index_metadata.json")
 
-        if not os.path.exists(index_path) or not os.path.exists(metadata_path):
+        if not os.path.exists(metadata_path):
             return []
 
         # Load metadata
@@ -70,26 +35,67 @@ class VectorDBService:
         if not serialized_blocks:
             return []
 
-        # Load FAISS index
-        index = faiss.read_index(index_path)
+        # Tokenize query
+        query_tokens = re.findall(r'\w+', query.lower())
+        if not query_tokens:
+            return [OCRBlock(**b) for b in serialized_blocks[:top_k]]
 
-        # Embed query
-        query_embedding = self.model.encode([query], convert_to_numpy=True)
-        query_embedding = query_embedding.astype('float32')
-        faiss.normalize_L2(query_embedding)
+        # BM25 parameters
+        k1 = 1.5
+        b = 0.75
 
-        # Cap top_k to maximum items in the index
-        search_k = min(top_k, len(serialized_blocks))
-        if search_k <= 0:
-            return []
+        # 1. Tokenize document blocks and build stats
+        docs_tokens = []
+        doc_freqs = {}  # Number of blocks containing each term
+        total_len = 0
 
-        # Search index
-        distances, indices = index.search(query_embedding, search_k)
+        for block in serialized_blocks:
+            text = block.get("text", "")
+            tokens = re.findall(r'\w+', text.lower())
+            docs_tokens.append(tokens)
+            total_len += len(tokens)
+            
+            # Record unique tokens in this block for doc_freqs
+            unique_tokens = set(tokens)
+            for token in unique_tokens:
+                doc_freqs[token] = doc_freqs.get(token, 0) + 1
+
+        doc_count = len(serialized_blocks)
+        avg_doc_len = total_len / doc_count if doc_count > 0 else 1.0
+
+        # 2. Score each block
+        scores = []
+        for idx, block_tokens in enumerate(docs_tokens):
+            score = 0.0
+            doc_len = len(block_tokens)
+            
+            # Term frequencies within this block
+            tf_dict = {}
+            for token in block_tokens:
+                tf_dict[token] = tf_dict.get(token, 0) + 1
+
+            for token in query_tokens:
+                if token not in tf_dict:
+                    continue
+                tf = tf_dict[token]
+                n_q = doc_freqs.get(token, 0)
+                
+                # Smoothed IDF formula
+                idf = math.log((doc_count - n_q + 0.5) / (n_q + 0.5) + 1.0)
+                
+                # BM25 formula
+                numerator = tf * (k1 + 1)
+                denominator = tf + k1 * (1.0 - b + b * (doc_len / avg_doc_len))
+                score += idf * (numerator / denominator)
+                
+            scores.append((score, idx))
+
+        # 3. Sort blocks by score descending
+        scores.sort(key=lambda x: x[0], reverse=True)
 
         results = []
-        for idx in indices[0]:
-            if idx != -1 and idx < len(serialized_blocks):
-                results.append(OCRBlock(**serialized_blocks[idx]))
+        for score, idx in scores[:top_k]:
+            results.append(OCRBlock(**serialized_blocks[idx]))
 
         return results
 

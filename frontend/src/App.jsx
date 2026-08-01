@@ -287,7 +287,12 @@ export default function App() {
   const isShareRoute = window.location.pathname.startsWith("/share/");
 
   const [user, setUser] = useState(null);
+  const [profileImageError, setProfileImageError] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    setProfileImageError(false);
+  }, [user]);
   
   // Light/Dark Theme Switcher state
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
@@ -810,10 +815,12 @@ export default function App() {
             }}
             title="Account Settings"
           >
-            {user.photoURL ? (
+            {user.photoURL && !profileImageError ? (
               <img 
                 src={user.photoURL} 
                 alt="Profile" 
+                referrerPolicy="no-referrer"
+                onError={() => setProfileImageError(true)}
                 style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }} 
               />
             ) : (
@@ -917,10 +924,12 @@ export default function App() {
                   gap: "24px",
                   boxShadow: "var(--shadow-sm)"
                 }}>
-                  {user.photoURL ? (
+                  {user.photoURL && !profileImageError ? (
                     <img 
                       src={user.photoURL} 
                       alt="Profile" 
+                      referrerPolicy="no-referrer"
+                      onError={() => setProfileImageError(true)}
                       style={{ width: "72px", height: "72px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--color-accent)" }} 
                     />
                   ) : (

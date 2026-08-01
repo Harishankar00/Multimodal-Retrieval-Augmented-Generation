@@ -88,6 +88,7 @@ def get_chats(user_id: str = Depends(get_current_user)):
 @app.post("/api/chats")
 def create_chat(request: ChatCreateRequest, user_id: str = Depends(get_current_user)):
     try:
+        print(f"DEBUG: create_chat - user_id: '{user_id}', chat_id: '{request.chat_id}'")
         chat_ref = firestore_db.collection("users").document(user_id).collection("chats").document(request.chat_id)
         chat_data = {
             "doc_id": request.doc_id,
@@ -179,6 +180,12 @@ def upload_document(chat_id: str, file: UploadFile = File(...), user_id: str = D
         )
     
     chat_ref = firestore_db.collection("users").document(user_id).collection("chats").document(chat_id)
+    print(f"DEBUG: upload_document - user_id: '{user_id}', chat_id: '{chat_id}', exists: {chat_ref.get().exists}")
+    if not chat_ref.get().exists:
+        raise HTTPException(
+            status_code=404,
+            detail="Chat session not found or has been deleted"
+        )
     try:
         # Initialize progress tracker in Firestore chat metadata
         chat_ref.update({"processing_progress": 0})
@@ -219,11 +226,12 @@ def upload_document(chat_id: str, file: UploadFile = File(...), user_id: str = D
             uploaded = chat_data.get("uploaded_documents", [])
             # Avoid duplicate uploads of the same doc_id
             if not any(d.get("doc_id") == ocr_result.doc_id for d in uploaded):
+                import datetime
                 uploaded.append({
                     "doc_id": ocr_result.doc_id,
                     "filename": ocr_result.filename,
                     "pages_count": ocr_result.pages_count,
-                    "created_at": firestore.SERVER_TIMESTAMP
+                    "created_at": datetime.datetime.now(datetime.timezone.utc)
                 })
                 chat_ref.update({"uploaded_documents": uploaded})
 
@@ -412,13 +420,32 @@ def query_document(request: QueryRequest, user_id: str = Depends(get_current_use
 
 @app.get("/api/documents/{doc_id}/pages/{page_num}")
 def get_document_page(doc_id: str, page_num: int):
+    # Try local file first (fast response for recently uploaded files)
     page_path = os.path.join(DATA_DIR, doc_id, f"page_{page_num}.png")
-    if not os.path.exists(page_path):
-        raise HTTPException(
-            status_code=404,
-            detail="Document page image not found"
-        )
-    return FileResponse(page_path)
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+        
+    # Ephemeral cache miss fallback: generate a signed URL and redirect to Firebase Storage
+    try:
+        from app.services.firebase_config import bucket
+        from fastapi.responses import RedirectResponse
+        import datetime
+        
+        storage_path = f"documents/{doc_id}/page_{page_num}.png"
+        blob = bucket.blob(storage_path)
+        if blob.exists():
+            url = blob.generate_signed_url(
+                expiration=datetime.timedelta(hours=1),
+                method="GET"
+            )
+            return RedirectResponse(url)
+    except Exception as e:
+        print(f"Firebase Storage page fallback failed: {e}")
+        
+    raise HTTPException(
+        status_code=404,
+        detail="Document page image not found"
+    )
 
 @app.get("/api/chats/{chat_id}/documents/{doc_id}")
 def get_chat_document(chat_id: str, doc_id: str, user_id: str = Depends(get_current_user)):
