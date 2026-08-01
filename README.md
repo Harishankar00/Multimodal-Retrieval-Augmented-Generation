@@ -39,12 +39,15 @@ flowchart TD
     LLMSvc -->|Gemini multimodal VQA reasoning| Chat
 ```
 
-* **Frontend**: React SPA scaffolded with Vite and styled utilizing custom Vanilla CSS variables for a high-performance obsidian dark theme.
+* **Frontend**: React SPA scaffolded with Vite and styled utilizing custom Vanilla CSS variables for a high-performance obsidian/amber theme.
 * **OCR Layer**: `EasyOCR` extracts textual strings along with their 4-point bounding box coordinates.
 * **PDF Layer**: `PyMuPDF` (`fitz`) handles rapid page rendering and PNG extraction.
 * **Vector Store**: A standalone local `FAISS` database created dynamically per document to support single-document scoped VQA queries with zero overhead.
 * **Embeddings**: `SentenceTransformers` (`all-MiniLM-L6-v2`) computes 384-dimensional dense vectors for semantic search.
-* **Generative AI**: `google-genai` SDK coordinates multimodal content generation (`gemini-2.0-flash`) passing visual context directly alongside OCR coordinates.
+* **Generative AI**: OpenRouter SDK coordinates content generation passing visual context directly alongside OCR coordinates.
+* **Layout scroll locking**: Static active chat headers keep uploaded document lists in place while message feeds scroll.
+* **Public Chat sharing**: Allows users to snapshot and share public read-only conversation links with citations.
+* **Daily Cost analytics**: SVG daily cost token charts displayed in the settings sidebar tab.
 
 ---
 

@@ -78,3 +78,64 @@ def test_query_endpoint_mocked():
         assert data["answer"] == mocked_answer
         assert isinstance(data["sources"], list)
         mock_method.assert_called_once()
+
+def test_share_chat_endpoint():
+    main.firestore_db = mock_firestore
+    mock_chat_doc = MagicMock()
+    mock_chat_doc.exists = True
+    mock_chat_doc.to_dict.return_value = {"filename": "Test Chat", "uploaded_documents": []}
+    
+    mock_messages_stream = MagicMock()
+    mock_messages_stream.order_by.return_value.stream.return_value = []
+    
+    mock_chat_ref = MagicMock()
+    mock_chat_ref.get.return_value = mock_chat_doc
+    mock_chat_ref.collection.return_value = mock_messages_stream
+    
+    mock_firestore.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_chat_ref
+    
+    response = client.post("/api/chats/test_chat_123/share")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert "share_id" in data
+    assert "share_url" in data
+
+def test_get_shared_chat_endpoint():
+    main.firestore_db = mock_firestore
+    mock_shared_doc = MagicMock()
+    mock_shared_doc.exists = True
+    mock_shared_doc.to_dict.return_value = {
+        "share_id": "share_abc",
+        "title": "Test Shared Chat",
+        "messages": [],
+        "uploaded_documents": [],
+        "created_at": None
+    }
+    
+    mock_firestore.collection.return_value.document.return_value.get.return_value = mock_shared_doc
+    
+    response = client.get("/api/shared/share_abc")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["share_id"] == "share_abc"
+    assert data["title"] == "Test Shared Chat"
+
+def test_analytics_endpoint():
+    main.firestore_db = mock_firestore
+    mock_chat_snap = MagicMock()
+    mock_firestore.collection.return_value.document.return_value.collection.return_value.stream.return_value = [mock_chat_snap]
+    
+    mock_msg_snap = MagicMock()
+    mock_msg_snap.to_dict.return_value = {
+        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        "timestamp": MagicMock()
+    }
+    mock_chat_snap.reference.collection.return_value.stream.return_value = [mock_msg_snap]
+    
+    response = client.get("/api/analytics/token-usage")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 7
+

@@ -303,12 +303,16 @@ body {
 .chat-container {
   display: flex;
   flex-direction: column;
+  height: 100%;
   width: 100%;
   background: transparent;
   border-left: none;
+  overflow: hidden;
 }
 
 .chat-history {
+  flex: 1;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -616,7 +620,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--bg-primary);
 }
 

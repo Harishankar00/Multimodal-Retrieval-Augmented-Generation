@@ -437,6 +437,108 @@ def get_chat_document(chat_id: str, doc_id: str, user_id: str = Depends(get_curr
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/analytics/token-usage")
+def get_token_usage_analytics(user_id: str = Depends(get_current_user)):
+    try:
+        from datetime import datetime, timedelta, date
+        # Gather data for the past 7 days
+        today = date.today()
+        dates_list = [today - timedelta(days=i) for i in range(6, -1, -1)]
+        
+        # Initialize daily aggregation dictionary
+        daily_stats = {d.isoformat(): {"date": d.isoformat(), "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0} for d in dates_list}
+        
+        # Stream all chats for this user
+        chats_ref = firestore_db.collection("users").document(user_id).collection("chats")
+        chats_docs = chats_ref.stream()
+        
+        for chat_snap in chats_docs:
+            messages_ref = chat_snap.reference.collection("messages")
+            # Get all messages
+            msg_docs = messages_ref.stream()
+            for msg_snap in msg_docs:
+                m_data = msg_snap.to_dict() or {}
+                usage = m_data.get("usage")
+                timestamp = m_data.get("timestamp")
+                
+                if usage and timestamp:
+                    # Convert Firestore datetime to date string
+                    msg_date = timestamp.date()
+                    msg_date_str = msg_date.isoformat()
+                    
+                    if msg_date_str in daily_stats:
+                        daily_stats[msg_date_str]["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                        daily_stats[msg_date_str]["completion_tokens"] += usage.get("completion_tokens", 0)
+                        
+                        # Estimated cost spent using standard LLM API rates
+                        prompt_cost = (usage.get("prompt_tokens", 0) / 1000.0) * 0.0015
+                        completion_cost = (usage.get("completion_tokens", 0) / 1000.0) * 0.0020
+                        total_cost = prompt_cost + completion_cost
+                        daily_stats[msg_date_str]["cost"] += total_cost
+
+        # Return sorted list chronologically
+        sorted_stats = [daily_stats[d.isoformat()] for d in dates_list]
+        return sorted_stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chats/{chat_id}/share")
+def share_chat(chat_id: str, user_id: str = Depends(get_current_user)):
+    try:
+        import uuid
+        chat_ref = firestore_db.collection("users").document(user_id).collection("chats").document(chat_id)
+        chat_doc = chat_ref.get()
+        if not chat_doc.exists:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        chat_data = chat_doc.to_dict() or {}
+        
+        # Load messages subcollection
+        messages_ref = chat_ref.collection("messages")
+        docs = messages_ref.order_by("timestamp", direction=firestore.Query.ASCENDING).stream()
+        messages_list = []
+        for doc in docs:
+            d = doc.to_dict()
+            if "timestamp" in d and d["timestamp"]:
+                d["timestamp"] = d["timestamp"].isoformat()
+            if "sources" in d and d["sources"]:
+                for src in d["sources"]:
+                    flat_box = src.get("box", [])
+                    src["box"] = [flat_box[i:i+2] for i in range(0, len(flat_box), 2)]
+            messages_list.append(d)
+
+        share_id = f"share_{uuid.uuid4().hex}"
+        shared_ref = firestore_db.collection("shared_chats").document(share_id)
+        shared_ref.set({
+            "share_id": share_id,
+            "title": chat_data.get("filename") or "Shared Conversation",
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "uploaded_documents": chat_data.get("uploaded_documents", []),
+            "messages": messages_list
+        })
+        
+        return {
+            "status": "success",
+            "share_id": share_id,
+            "share_url": f"http://localhost:5173/share/{share_id}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/shared/{share_id}")
+def get_shared_chat(share_id: str):
+    try:
+        shared_doc = firestore_db.collection("shared_chats").document(share_id).get()
+        if not shared_doc.exists:
+            raise HTTPException(status_code=404, detail="Shared chat conversation not found")
+        
+        data = shared_doc.to_dict() or {}
+        if "created_at" in data and data["created_at"]:
+            data["created_at"] = data["created_at"].isoformat()
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

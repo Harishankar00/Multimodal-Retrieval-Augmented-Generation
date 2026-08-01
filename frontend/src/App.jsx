@@ -1,11 +1,291 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import ReactMarkdown from "react-markdown";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "./firebase";
 import Auth from "./components/Auth";
 import DocumentViewer from "./components/DocumentViewer";
 import ChatPane from "./components/ChatPane";
 
+function TokenAnalyticsChart({ data }) {
+  if (!data || data.length === 0) {
+    return <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No token usage recorded in the last 7 days.</div>;
+  }
+
+  // Calculate scaling factors
+  const maxCost = Math.max(...data.map(d => d.cost), 0.0001); // fallback min scale
+  const chartHeight = 150;
+  const chartWidth = 500;
+  const paddingLeft = 60;
+  const paddingBottom = 25;
+
+  const barWidth = 24;
+  const barSpacing = (chartWidth - paddingLeft) / data.length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginTop: "12px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h4 style={{ margin: 0, fontSize: "14px", color: "var(--text-secondary)", fontWeight: 600 }}>Daily OpenRouter Cost Split</h4>
+        <span style={{ fontSize: "12px", color: "var(--color-accent)", fontWeight: 700 }}>
+          7-Day Total: ${data.reduce((sum, d) => sum + d.cost, 0).toFixed(6)}
+        </span>
+      </div>
+
+      <div style={{ width: "100%", overflowX: "auto" }}>
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight + paddingBottom}`} style={{ width: "100%", height: "200px" }}>
+          <defs>
+            <linearGradient id="amber-chart-gradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#f59e0b" />
+              <stop offset="100%" stopColor="#d97706" stopOpacity="0.2" />
+            </linearGradient>
+          </defs>
+
+          {/* Grid lines */}
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+            const y = chartHeight - ratio * chartHeight;
+            return (
+              <line
+                key={i}
+                x1={paddingLeft}
+                y1={y}
+                x2={chartWidth}
+                y2={y}
+                style={{ stroke: "var(--border-color)", strokeWidth: 1, strokeDasharray: "4 4" }}
+              />
+            );
+          })}
+
+          {/* Chart Bars */}
+          {data.map((day, idx) => {
+            const barHeight = (day.cost / maxCost) * (chartHeight - 15);
+            const x = paddingLeft + idx * barSpacing + (barSpacing - barWidth) / 2;
+            const y = chartHeight - barHeight;
+            const dateObj = new Date(day.date);
+            const dateLabel = dateObj.toLocaleDateString(undefined, { weekday: "short", day: "numeric" });
+
+            return (
+              <g key={idx}>
+                <rect
+                  x={x}
+                  y={y}
+                  width={barWidth}
+                  height={barHeight}
+                  fill="url(#amber-chart-gradient)"
+                  stroke="#f59e0b"
+                  strokeWidth="1.5"
+                  rx={3}
+                  style={{ transition: "all 0.3s ease", cursor: "pointer" }}
+                />
+                
+                {/* Date Label */}
+                <text
+                  x={x + barWidth / 2}
+                  y={chartHeight + 16}
+                  textAnchor="middle"
+                  style={{ fontSize: "9px", fill: "var(--text-secondary)", fontFamily: "inherit" }}
+                >
+                  {dateLabel}
+                </text>
+
+                {/* Tooltip content on hover */}
+                <title>{`Date: ${day.date}\nCost: $${day.cost.toFixed(6)}\nPrompt: ${day.prompt_tokens} tokens\nCompletion: ${day.completion_tokens} tokens`}</title>
+              </g>
+            );
+          })}
+
+          {/* Y Axis cost labels */}
+          {[0, 0.5, 1].map((ratio, i) => {
+            const y = chartHeight - ratio * chartHeight;
+            const labelValue = ratio * maxCost;
+            return (
+              <text
+                key={i}
+                x={paddingLeft - 8}
+                y={y + 3}
+                textAnchor="end"
+                style={{ fontSize: "9px", fill: "var(--text-secondary)", fontFamily: "inherit" }}
+              >
+                {`$${labelValue.toFixed(4)}`}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function SharedChatView() {
+  const shareId = window.location.pathname.split("/share/")[1];
+  const [sharedData, setSharedData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Document viewer state
+  const [viewingDoc, setViewingDoc] = useState(null);
+  const [activePage, setActivePage] = useState(1);
+  const [blocks, setBlocks] = useState([]);
+  const [activeBlock, setActiveBlock] = useState(null);
+
+  useEffect(() => {
+    const fetchShared = async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/api/shared/${shareId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSharedData(data);
+        } else {
+          setError("Shared conversation not found or expired.");
+        }
+      } catch (err) {
+        setError("Failed to connect to backend: " + err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchShared();
+  }, [shareId]);
+
+  // Load layout blocks when viewingDoc changes
+  useEffect(() => {
+    if (!viewingDoc) {
+      setBlocks([]);
+      return;
+    }
+    const fetchBlocks = async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/api/chats/${sharedData.share_id}/documents/${viewingDoc.doc_id}`);
+        if (res.ok) {
+          const docData = await res.json();
+          setBlocks(docData.blocks || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch shared document blocks:", err);
+      }
+    };
+    fetchBlocks();
+  }, [viewingDoc]);
+
+  const handleViewDocument = (docMeta, pageNum = 1, highlightBlock = null) => {
+    setViewingDoc(docMeta);
+    setActivePage(pageNum);
+    setActiveBlock(highlightBlock);
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg-primary)" }}>
+        <div className="spinner"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg-primary)", color: "var(--text-secondary)", gap: "16px" }}>
+        <h3>Error</h3>
+        <p>{error}</p>
+        <button className="btn-primary" onClick={() => window.location.href = "/"}>Go to App Home</button>
+      </div>
+    );
+  }
+
+  const activeChatDocuments = sharedData.uploaded_documents || [];
+
+  return (
+    <div className="app-container" style={{ position: "relative", overflow: "hidden", display: "flex", height: "100vh" }}>
+      <div style={{ flex: 1, display: "flex", height: "100%", overflow: "hidden", position: "relative" }}>
+        <main className="main-content" style={{ position: "relative", marginRight: viewingDoc ? "50%" : "0%", transition: "margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)", overflow: "hidden" }}>
+          <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ padding: "24px 24px 16px 24px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--bg-secondary)" }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                  {sharedData.title}
+                </h2>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                  Shared Conversation Log
+                </span>
+              </div>
+              <button className="btn-primary" onClick={() => window.location.href = "/"} style={{ fontSize: "13px", padding: "8px 16px" }}>
+                Sign In to Chat
+              </button>
+            </div>
+
+            {/* Document list */}
+            {activeChatDocuments.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "12px 24px", borderBottom: "1px solid var(--border-color)", background: "var(--bg-secondary)" }}>
+                {activeChatDocuments.map((doc, idx) => (
+                  <div key={idx} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-color)", borderRadius: "8px", padding: "6px 12px", fontSize: "13px", display: "flex", alignItems: "center", gap: "12px" }}>
+                    <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>
+                      {doc.filename}
+                    </span>
+                    <button onClick={() => handleViewDocument(doc)} style={{ background: "transparent", border: "none", color: "var(--color-accent)", fontWeight: 600, cursor: "pointer", fontSize: "12px", padding: 0 }}>
+                      View
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Scrollable messages container */}
+            <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+              <div className="chat-container">
+                <div className="chat-history">
+                  {sharedData.messages.map((msg, idx) => (
+                    <div key={idx} className={`chat-message ${msg.role}`}>
+                      <div className="chat-message-text">
+                        <ReactMarkdown>{msg.text}</ReactMarkdown>
+                      </div>
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="sources-container">
+                          <div className="source-header">Sources:</div>
+                          {msg.sources.map((src, sIdx) => {
+                            const docMeta = activeChatDocuments.find(d => d.doc_id === src.doc_id);
+                            const filename = docMeta ? docMeta.filename : "document";
+                            return (
+                              <div key={sIdx} className="source-pill" onClick={() => handleViewDocument(docMeta || { doc_id: src.doc_id, filename }, src.page_number, src)}>
+                                Page {src.page_number} ({filename}): "{src.text.slice(0, 30)}..."
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)", fontSize: "12px" }}>
+                    End of shared transcript.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* Sliding document viewer */}
+        {viewingDoc && (
+          <aside style={{ position: "absolute", right: 0, top: 0, width: "50%", height: "100%", background: "var(--bg-secondary)", borderLeft: "1px solid var(--border-color)", boxShadow: "var(--shadow-lg)", display: "flex", flexDirection: "column", zIndex: 100 }}>
+            <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-secondary)" }}>
+              <span style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: "15px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "80%", color: "var(--text-primary)" }}>
+                Viewing: {viewingDoc.filename}
+              </span>
+              <button onClick={() => setViewingDoc(null)} className="btn-icon" style={{ width: "32px", height: "32px" }}>
+                Close
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+              <DocumentViewer docId={viewingDoc.doc_id} pagesCount={viewingDoc.pages_count} activePage={activePage} setActivePage={setActivePage} blocks={blocks} activeBlock={activeBlock} setActiveBlock={setActiveBlock} />
+            </div>
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  // Check shared route status
+  const isShareRoute = window.location.pathname.startsWith("/share/");
+
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   
@@ -18,10 +298,17 @@ export default function App() {
   // Account Settings view switcher
   const [showSettings, setShowSettings] = useState(false);
 
+  // Analytics graph states
+  const [analyticsData, setAnalyticsData] = useState([]);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+
   // Chats list & active chat context
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [sidebarSearch, setSidebarSearch] = useState("");
+
+  // Share conversation settings
+  const [shareUrl, setShareUrl] = useState(null);
 
   // Active viewing document overlay state
   const [viewingDoc, setViewingDoc] = useState(null);
@@ -40,6 +327,10 @@ export default function App() {
 
   // 1. Listen to Auth State Changes
   useEffect(() => {
+    if (isShareRoute) {
+      setAuthLoading(false);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
@@ -51,16 +342,17 @@ export default function App() {
       }
     });
     return unsubscribe;
-  }, []);
+  }, [isShareRoute]);
 
   // 2. Fetch User's Chats on Login
   useEffect(() => {
-    if (!user) return;
+    if (!user || isShareRoute) return;
     loadChats();
-  }, [user]);
+  }, [user, isShareRoute]);
 
   // Polling logic when any chat document is currently processing OCR in the backend
   useEffect(() => {
+    if (isShareRoute) return;
     const hasActiveProcessing = chats.some(c => c.processing_progress !== undefined && c.processing_progress !== null);
     if (!hasActiveProcessing || !user) return;
 
@@ -69,7 +361,14 @@ export default function App() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [chats, activeChatId, user]);
+  }, [chats, activeChatId, user, isShareRoute]);
+
+  // 3. Load daily token usage history when settings screen opens
+  useEffect(() => {
+    if (showSettings && user && !isShareRoute) {
+      fetchAnalytics();
+    }
+  }, [showSettings, user, isShareRoute]);
 
   const loadChats = async (selectId = null) => {
     try {
@@ -99,9 +398,29 @@ export default function App() {
     }
   };
 
-  // 3. Load layout blocks when viewingDoc changes
+  const fetchAnalytics = async () => {
+    setLoadingAnalytics(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("http://localhost:8000/api/analytics/token-usage", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAnalyticsData(data);
+      }
+    } catch (err) {
+      console.error("Failed to load analytics data:", err);
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  };
+
+  // 4. Load layout blocks when viewingDoc changes
   useEffect(() => {
-    if (!viewingDoc || !activeChatId) {
+    if (!viewingDoc || !activeChatId || isShareRoute) {
       setBlocks([]);
       return;
     }
@@ -124,7 +443,7 @@ export default function App() {
     };
 
     fetchBlocks();
-  }, [viewingDoc, activeChatId]);
+  }, [viewingDoc, activeChatId, isShareRoute]);
 
   const handleCreateChat = async () => {
     if (!user) return;
@@ -316,29 +635,35 @@ export default function App() {
     }
   };
 
+  const handleShareChat = async () => {
+    if (!activeChatId || !user) return;
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`http://localhost:8000/api/chats/${activeChatId}/share`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const publicUrl = `${window.location.protocol}//${window.location.host}/share/${data.share_id}`;
+        setShareUrl(publicUrl);
+      }
+    } catch (err) {
+      console.error("Failed to share chat:", err);
+    }
+  };
+
   const getInitials = () => {
     if (user?.displayName) return user.displayName.substring(0, 2).toUpperCase();
     if (user?.email) return user.email.substring(0, 2).toUpperCase();
     return "US";
   };
 
-  // Find active chat details
-  const activeChat = chats.find((c) => c.chat_id === activeChatId);
-  const activeChatDocuments = activeChat?.uploaded_documents || [];
-  const activeChatTitle = activeChatDocuments[0]?.filename || activeChat?.filename || "Untitled Chat";
-
-  // Gather all attachments list across all chats for the settings panel
-  const allAttachments = chats.reduce((acc, c) => {
-    const docs = c.uploaded_documents || [];
-    docs.forEach(doc => {
-      acc.push({
-        ...doc,
-        chat_id: c.chat_id,
-        chat_title: docs[0]?.filename || c.filename || "Untitled Chat"
-      });
-    });
-    return acc;
-  }, []);
+  if (isShareRoute) {
+    return <SharedChatView />;
+  }
 
   if (authLoading) {
     return (
@@ -358,6 +683,24 @@ export default function App() {
   if (!user) {
     return <Auth />;
   }
+
+  // Find active chat details
+  const activeChat = chats.find((c) => c.chat_id === activeChatId);
+  const activeChatDocuments = activeChat?.uploaded_documents || [];
+  const activeChatTitle = activeChatDocuments[0]?.filename || activeChat?.filename || "Untitled Chat";
+
+  // Gather all attachments list across all chats for the settings panel
+  const allAttachments = chats.reduce((acc, c) => {
+    const docs = c.uploaded_documents || [];
+    docs.forEach(doc => {
+      acc.push({
+        ...doc,
+        chat_id: c.chat_id,
+        chat_title: docs[0]?.filename || c.filename || "Untitled Chat"
+      });
+    });
+    return acc;
+  }, []);
 
   return (
     <div className="app-container" style={{ position: "relative", overflow: "hidden" }}>
@@ -536,218 +879,240 @@ export default function App() {
             position: "relative",
             marginRight: viewingDoc ? "50%" : "0%",
             transition: "margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-            overflowY: "auto"
+            overflow: "hidden"
           }}
         >
           {showSettings ? (
-            /* Premium Settings Dashboard Screen */
-            <div style={{
-              maxWidth: "800px",
-              margin: "40px auto",
-              padding: "0 24px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "24px"
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                <button 
-                  className="btn-icon" 
-                  onClick={() => setShowSettings(false)}
-                  style={{ width: "auto", padding: "0 14px", height: "36px" }}
-                >
-                  ← Back to Chat
-                </button>
-                <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
-                  Account Settings
-                </h2>
-              </div>
-
-              {/* Profile Card */}
+            /* Settings Dashboard wrapped in local scroll container */
+            <div style={{ flex: 1, overflowY: "auto", height: "100%", padding: "40px 0" }}>
               <div style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-color)",
-                borderRadius: "12px",
-                padding: "24px",
+                maxWidth: "800px",
+                margin: "0 auto",
+                padding: "0 24px",
                 display: "flex",
-                alignItems: "center",
-                gap: "24px",
-                boxShadow: "var(--shadow-sm)"
+                flexDirection: "column",
+                gap: "24px"
               }}>
-                {user.photoURL ? (
-                  <img 
-                    src={user.photoURL} 
-                    alt="Profile" 
-                    style={{ width: "72px", height: "72px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--color-accent)" }} 
-                  />
-                ) : (
-                  <div style={{
-                    width: "72px",
-                    height: "72px",
-                    borderRadius: "50%",
-                    background: "var(--color-accent)",
-                    color: "#ffffff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "24px",
-                    fontWeight: 700
-                  }}>
-                    {getInitials()}
-                  </div>
-                )}
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>
-                    {user.displayName || "Workspace User"}
-                  </div>
-                  <div style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
-                    Email: {user.email}
-                  </div>
-                  <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                    Joined: {new Date(user.metadata.creationTime).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                  <button 
+                    className="btn-icon" 
+                    onClick={() => setShowSettings(false)}
+                    style={{ width: "auto", padding: "0 14px", height: "36px" }}
+                  >
+                    ← Back to Chat
+                  </button>
+                  <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                    Account Settings
+                  </h2>
+                </div>
+
+                {/* Profile Card */}
+                <div style={{
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "12px",
+                  padding: "24px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "24px",
+                  boxShadow: "var(--shadow-sm)"
+                }}>
+                  {user.photoURL ? (
+                    <img 
+                      src={user.photoURL} 
+                      alt="Profile" 
+                      style={{ width: "72px", height: "72px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--color-accent)" }} 
+                    />
+                  ) : (
+                    <div style={{
+                      width: "72px",
+                      height: "72px",
+                      borderRadius: "50%",
+                      background: "var(--color-accent)",
+                      color: "#ffffff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "24px",
+                      fontWeight: 700
+                    }}>
+                      {getInitials()}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>
+                      {user.displayName || "Workspace User"}
+                    </div>
+                    <div style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
+                      Email: {user.email}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                      Joined: {new Date(user.metadata.creationTime).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Chat Sessions History List */}
-              <div style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-color)",
-                borderRadius: "12px",
-                padding: "24px",
-                boxShadow: "var(--shadow-sm)"
-              }}>
-                <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
-                  Your Active Conversations ({chats.length})
-                </h3>
-                {chats.length === 0 ? (
-                  <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No conversations started yet.</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    {chats.map((c, idx) => {
-                      const chatDocs = c.uploaded_documents || [];
-                      return (
+                {/* Token usage analytics card */}
+                <div style={{
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "12px",
+                  padding: "24px",
+                  boxShadow: "var(--shadow-sm)"
+                }}>
+                  <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                    Usage Analytics
+                  </h3>
+                  {loadingAnalytics ? (
+                    <div style={{ padding: "20px 0", textAlign: "center", color: "var(--text-muted)", fontSize: "14px" }}>
+                      Loading token analytics...
+                    </div>
+                  ) : (
+                    <TokenAnalyticsChart data={analyticsData} />
+                  )}
+                </div>
+
+                {/* Chat Sessions History List */}
+                <div style={{
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "12px",
+                  padding: "24px",
+                  boxShadow: "var(--shadow-sm)"
+                }}>
+                  <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                    Your Active Conversations ({chats.length})
+                  </h3>
+                  {chats.length === 0 ? (
+                    <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No conversations started yet.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {chats.map((c, idx) => {
+                        const chatDocs = c.uploaded_documents || [];
+                        return (
+                          <div 
+                            key={idx}
+                            onClick={() => {
+                              setActiveChatId(c.chat_id);
+                              setShowSettings(false);
+                              setViewingDoc(null);
+                            }}
+                            style={{
+                              padding: "12px 16px",
+                              border: "1px solid var(--border-color)",
+                              borderRadius: "8px",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              cursor: "pointer",
+                              transition: "background 0.2s"
+                            }}
+                            className="settings-chat-item-hover"
+                          >
+                            <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--color-accent)" }}>
+                              {chatDocs[0]?.filename || c.filename || "Empty Chat Room"}
+                            </span>
+                            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                              {chatDocs.length} attachment(s)
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Files Attached List */}
+                <div style={{
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "12px",
+                  padding: "24px",
+                  boxShadow: "var(--shadow-sm)"
+                }}>
+                  <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                    Attached Documents ({allAttachments.length})
+                  </h3>
+                  {allAttachments.length === 0 ? (
+                    <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No documents uploaded yet.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {allAttachments.map((att, idx) => (
                         <div 
                           key={idx}
-                          onClick={() => {
-                            setActiveChatId(c.chat_id);
-                            setShowSettings(false);
-                            setViewingDoc(null);
-                          }}
                           style={{
                             padding: "12px 16px",
                             border: "1px solid var(--border-color)",
                             borderRadius: "8px",
                             display: "flex",
                             justifyContent: "space-between",
-                            alignItems: "center",
-                            cursor: "pointer",
-                            transition: "background 0.2s"
+                            alignItems: "center"
                           }}
-                          className="settings-chat-item-hover"
                         >
-                          <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--color-accent)" }}>
-                            {chatDocs[0]?.filename || c.filename || "Empty Chat Room"}
-                          </span>
-                          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                            {chatDocs.length} attachment(s)
-                          </span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
+                              {att.filename}
+                            </span>
+                            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                              From Chat: {att.chat_title}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: "8px" }}>
+                            <button
+                              onClick={() => {
+                                setActiveChatId(att.chat_id);
+                                handleViewDocument(att);
+                                setShowSettings(false);
+                              }}
+                              className="btn-icon"
+                              style={{ width: "auto", padding: "0 12px", height: "30px", fontSize: "12px" }}
+                            >
+                              View
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleDeleteDocument(att.doc_id);
+                              }}
+                              style={{
+                                background: "transparent",
+                                border: "1px solid #ef4444",
+                                color: "#ef4444",
+                                borderRadius: "6px",
+                                padding: "0 12px",
+                                height: "30px",
+                                fontSize: "12px",
+                                cursor: "pointer"
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-              {/* Files Attached List */}
-              <div style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-color)",
-                borderRadius: "12px",
-                padding: "24px",
-                boxShadow: "var(--shadow-sm)"
-              }}>
-                <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
-                  Attached Documents ({allAttachments.length})
-                </h3>
-                {allAttachments.length === 0 ? (
-                  <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>No documents uploaded yet.</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    {allAttachments.map((att, idx) => (
-                      <div 
-                        key={idx}
-                        style={{
-                          padding: "12px 16px",
-                          border: "1px solid var(--border-color)",
-                          borderRadius: "8px",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center"
-                        }}
-                      >
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                          <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
-                            {att.filename}
-                          </span>
-                          <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-                            From Chat: {att.chat_title}
-                          </span>
-                        </div>
-                        <div style={{ display: "flex", gap: "8px" }}>
-                          <button
-                            onClick={() => {
-                              setActiveChatId(att.chat_id);
-                              handleViewDocument(att);
-                              setShowSettings(false);
-                            }}
-                            className="btn-icon"
-                            style={{ width: "auto", padding: "0 12px", height: "30px", fontSize: "12px" }}
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleDeleteDocument(att.doc_id);
-                            }}
-                            style={{
-                              background: "transparent",
-                              border: "1px solid #ef4444",
-                              color: "#ef4444",
-                              borderRadius: "6px",
-                              padding: "0 12px",
-                              height: "30px",
-                              fontSize: "12px",
-                              cursor: "pointer"
-                            }}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Actions list */}
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
-                <button 
-                  onClick={handleLogout}
-                  style={{
-                    padding: "12px 24px",
-                    background: "transparent",
-                    border: "1px solid #ef4444",
-                    color: "#ef4444",
-                    borderRadius: "8px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    fontSize: "14px",
-                    transition: "all 0.2s"
-                  }}
-                  className="btn-signout-red"
-                >
-                  Sign Out
-                </button>
+                {/* Actions list */}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+                  <button 
+                    onClick={handleLogout}
+                    style={{
+                      padding: "12px 24px",
+                      background: "transparent",
+                      border: "1px solid #ef4444",
+                      color: "#ef4444",
+                      borderRadius: "8px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontSize: "14px",
+                      transition: "all 0.2s"
+                    }}
+                    className="btn-signout-red"
+                  >
+                    Sign Out
+                  </button>
+                </div>
               </div>
             </div>
           ) : !activeChatId ? (
@@ -772,92 +1137,108 @@ export default function App() {
               )}
             </div>
           ) : (
-            /* Interactive Chat Dashboard */
+            /* Interactive Chat Dashboard wrapped in flex column height 100% to lock scrolling */
             <div style={{
               display: "flex",
               flexDirection: "column",
-              minHeight: "100%",
+              height: "100%",
               width: "100%",
-              maxWidth: "800px",
-              margin: "0 auto",
-              padding: "24px 24px 40px 24px",
-              position: "relative"
+              position: "relative",
+              overflow: "hidden"
             }}>
-              {/* Chat Title Area */}
+              {/* Static Header Container */}
               <div style={{
-                paddingBottom: "16px",
+                padding: "24px 24px 16px 24px",
                 borderBottom: "1px solid var(--border-color)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between"
+                background: "var(--bg-secondary)",
+                zIndex: 10
               }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingLeft: isSidebarCollapsed ? "44px" : "0" }}>
-                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
-                    {activeChatTitle}
-                  </h2>
-                  <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                    {activeChatDocuments.length} document(s) uploaded
-                  </span>
-                </div>
-                
-                <div style={{ display: "flex", alignItems: "center" }}>
-                  {/* Realtime progress tracker bar */}
-                  {activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null && (
-                    <div style={{
-                      marginRight: "16px",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-end",
-                      gap: "4px"
-                    }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 500 }}>
-                        OCR Processing: {activeChat.processing_progress}%
-                      </div>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  width: "100%",
+                  maxWidth: "800px",
+                  margin: "0 auto"
+                }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingLeft: isSidebarCollapsed ? "44px" : "0" }}>
+                    <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-heading)", color: "var(--text-primary)" }}>
+                      {activeChatTitle}
+                    </h2>
+                    <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                      {activeChatDocuments.length} document(s) uploaded
+                    </span>
+                  </div>
+                  
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    {/* Realtime progress tracker bar */}
+                    {activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null && (
                       <div style={{
-                        width: "100px",
-                        height: "5px",
-                        background: "var(--border-color)",
-                        borderRadius: "3px",
-                        overflow: "hidden"
+                        marginRight: "16px",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-end",
+                        gap: "4px"
                       }}>
+                        <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 500 }}>
+                          OCR Processing: {activeChat.processing_progress}%
+                        </div>
                         <div style={{
-                          width: `${activeChat.processing_progress}%`,
-                          height: "100%",
-                          background: "var(--color-accent)",
-                          transition: "width 0.3s ease"
-                        }}></div>
+                          width: "100px",
+                          height: "5px",
+                          background: "var(--border-color)",
+                          borderRadius: "3px",
+                          overflow: "hidden"
+                        }}>
+                          <div style={{
+                            width: `${activeChat.processing_progress}%`,
+                            height: "100%",
+                            background: "var(--color-accent)",
+                            transition: "width 0.3s ease"
+                          }}></div>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* Export transcript button */}
-                  <button 
-                    onClick={handleExportTranscript}
-                    className="btn-icon"
-                    style={{ marginRight: "8px" }}
-                    title="Export Chat Transcript"
-                  >
-                    📤
-                  </button>
+                    {/* Share chat button */}
+                    <button 
+                      onClick={handleShareChat}
+                      className="btn-icon"
+                      style={{ marginRight: "8px" }}
+                      title="Share Conversation"
+                    >
+                      🔗
+                    </button>
 
-                  {/* Sun/Moon Toggle Theme switcher */}
-                  <button 
-                    onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-                    className="btn-icon"
-                    style={{ marginRight: "12px" }}
-                    title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
-                  >
-                    {theme === "light" ? "🌙" : "☀️"}
-                  </button>
+                    {/* Export transcript button */}
+                    <button 
+                      onClick={handleExportTranscript}
+                      className="btn-icon"
+                      style={{ marginRight: "8px" }}
+                      title="Export Chat Transcript"
+                    >
+                      📤
+                    </button>
 
-                  <button 
-                    onClick={() => document.getElementById("doc-plus-upload").click()}
-                    className="btn-primary"
-                    style={{ fontSize: "13px", padding: "8px 16px", borderRadius: "8px", fontWeight: 600 }}
-                    disabled={loading || (activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null)}
-                  >
-                    {loading || (activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null) ? "Processing..." : "+ Add Document"}
-                  </button>
+                    {/* Sun/Moon Toggle Theme switcher */}
+                    <button 
+                      onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+                      className="btn-icon"
+                      style={{ marginRight: "12px" }}
+                      title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+                    >
+                      {theme === "light" ? "🌙" : "☀️"}
+                    </button>
+
+                    <button 
+                      onClick={() => document.getElementById("doc-plus-upload").click()}
+                      className="btn-primary"
+                      style={{ fontSize: "13px", padding: "8px 16px", borderRadius: "8px", fontWeight: 600 }}
+                      disabled={loading || (activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null)}
+                    >
+                      {loading || (activeChat && activeChat.processing_progress !== undefined && activeChat.processing_progress !== null) ? "Processing..." : "+ Add Document"}
+                    </button>
+                  </div>
                 </div>
                 
                 <input 
@@ -867,83 +1248,94 @@ export default function App() {
                   accept=".pdf,.png,.jpg,.jpeg"
                   onChange={handleFileChange}
                 />
+
+                {/* Uploaded files list inside static header */}
+                {activeChatDocuments.length > 0 && (
+                  <div style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "8px",
+                    paddingTop: "12px",
+                    marginTop: "12px",
+                    borderTop: "1px solid var(--border-color)",
+                    width: "100%",
+                    maxWidth: "800px",
+                    margin: "12px auto 0 auto"
+                  }}>
+                    {activeChatDocuments.map((doc, idx) => (
+                      <div 
+                        key={idx} 
+                        style={{
+                          background: "var(--bg-secondary)",
+                          border: "1px solid var(--border-color)",
+                          borderRadius: "8px",
+                          padding: "6px 12px",
+                          fontSize: "13px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "12px",
+                          boxShadow: "var(--shadow-sm)"
+                        }}
+                      >
+                        <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>
+                          {doc.filename}
+                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <button 
+                            onClick={() => handleViewDocument(doc)}
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              color: "var(--color-accent)",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              padding: 0
+                            }}
+                          >
+                            View
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteDocument(doc.doc_id)}
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              color: "#ef4444",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              fontSize: "14px",
+                              padding: "0 4px",
+                              lineHeight: 1
+                            }}
+                            title="Delete Document"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Uploaded files list */}
-              {activeChatDocuments.length > 0 && (
-                <div style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "8px",
-                  padding: "12px 0",
-                  borderBottom: "1px solid var(--border-color)"
-                }}>
-                  {activeChatDocuments.map((doc, idx) => (
-                    <div 
-                      key={idx} 
-                      style={{
-                        background: "var(--bg-secondary)",
-                        border: "1px solid var(--border-color)",
-                        borderRadius: "8px",
-                        padding: "6px 12px",
-                        fontSize: "13px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "12px",
-                        boxShadow: "var(--shadow-sm)"
-                      }}
-                    >
-                      <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>
-                        {doc.filename}
-                      </span>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <button 
-                          onClick={() => handleViewDocument(doc)}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            color: "var(--color-accent)",
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            fontSize: "12px",
-                            padding: 0
-                          }}
-                        >
-                          View
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteDocument(doc.doc_id)}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            color: "#ef4444",
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            fontSize: "14px",
-                            padding: "0 4px",
-                            lineHeight: 1
-                          }}
-                          title="Delete Document"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               {/* Scrollable Chat feed container */}
-              <div style={{ flex: 1 }}>
-                <ChatPane
-                  chatId={activeChatId}
-                  docId={activeChatDocuments.length > 0 ? "active" : null}
-                  activeBlock={activeBlock}
-                  setActiveBlock={setActiveBlock}
-                  setActivePage={setActivePage}
-                  onViewDocument={handleViewDocument}
-                  activeChatDocuments={activeChatDocuments}
-                />
+              <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+                <div style={{
+                  maxWidth: "800px",
+                  margin: "0 auto",
+                  height: "100%",
+                  padding: "0 24px"
+                }}>
+                  <ChatPane
+                    chatId={activeChatId}
+                    docId={activeChatDocuments.length > 0 ? "active" : null}
+                    activeBlock={activeBlock}
+                    setActiveBlock={setActiveBlock}
+                    setActivePage={setActivePage}
+                    onViewDocument={handleViewDocument}
+                    activeChatDocuments={activeChatDocuments}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1006,6 +1398,92 @@ export default function App() {
           </aside>
         )}
       </div>
+
+      {/* Share Conversation Link Dialog Box */}
+      {shareUrl && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(0,0,0,0.6)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-color)",
+            borderRadius: "12px",
+            padding: "24px",
+            width: "90%",
+            maxWidth: "500px",
+            boxShadow: "var(--shadow-lg)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "16px"
+          }}>
+            <h3 style={{ margin: 0, color: "var(--text-primary)", fontFamily: "var(--font-heading)", fontSize: "18px", fontWeight: 700 }}>Share Conversation</h3>
+            <p style={{ fontSize: "13px", color: "var(--text-secondary)", margin: 0 }}>
+              Anyone with this public link can view this chat history snapshot:
+            </p>
+            <div style={{
+              display: "flex",
+              gap: "8px",
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              padding: "8px 12px",
+              borderRadius: "6px"
+            }}>
+              <input
+                type="text"
+                readOnly
+                value={shareUrl}
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-primary)",
+                  fontSize: "12px",
+                  outline: "none"
+                }}
+                id="share-link-input"
+              />
+              <button
+                onClick={() => {
+                  const copyText = document.getElementById("share-link-input");
+                  copyText.select();
+                  navigator.clipboard.writeText(copyText.value);
+                  alert("Copied to clipboard!");
+                }}
+                style={{
+                  background: "var(--color-accent)",
+                  color: "#ffffff",
+                  border: "none",
+                  padding: "6px 12px",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  fontWeight: 600
+                }}
+              >
+                Copy
+              </button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                className="btn-primary"
+                onClick={() => setShareUrl(null)}
+                style={{ width: "auto", padding: "0 16px", height: "36px" }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
