@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
+import { API_BASE } from "../config";
 
 function DocumentPage({ pageNumber, docId, blocks, activeBlock, setActiveBlock, searchQuery }) {
   const imgRef = useRef(null);
   const [scaleState, setScaleState] = useState({ x: 1, y: 1 });
   const [imgSizeState, setImgSizeState] = useState({ width: 0, height: 0 });
 
-  const imageUrl = `http://localhost:8000/api/documents/${docId}/pages/${pageNumber}`;
+  const imageUrl = `${API_BASE}/api/documents/${docId}/pages/${pageNumber}`;
 
   const updateScale = () => {
     if (imgRef.current) {

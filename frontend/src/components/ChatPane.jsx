@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { auth } from "../firebase";
+import { API_BASE } from "../config";
 
 export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, setActivePage, onViewDocument, activeChatDocuments }) {
   const [query, setQuery] = useState("");
@@ -25,7 +26,7 @@ export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, s
       setLoading(true);
       try {
         const token = await auth.currentUser?.getIdToken();
-        const res = await fetch(`http://localhost:8000/api/chats/${chatId}/messages`, {
+        const res = await fetch(`${API_BASE}/api/chats/${chatId}/messages`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }
@@ -74,7 +75,7 @@ export default function ChatPane({ chatId, docId, activeBlock, setActiveBlock, s
 
     try {
       const token = await auth.currentUser?.getIdToken();
-      const response = await fetch("http://localhost:8000/api/query", {
+      const response = await fetch(`${API_BASE}/api/query`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

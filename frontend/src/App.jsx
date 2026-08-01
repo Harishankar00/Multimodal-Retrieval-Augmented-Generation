@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "./firebase";
+import { API_BASE } from "./config";
 import Auth from "./components/Auth";
 import DocumentViewer from "./components/DocumentViewer";
 import ChatPane from "./components/ChatPane";
@@ -129,7 +130,7 @@ function SharedChatView() {
   useEffect(() => {
     const fetchShared = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/shared/${shareId}`);
+        const res = await fetch(`${API_BASE}/api/shared/${shareId}`);
         if (res.ok) {
           const data = await res.json();
           setSharedData(data);
@@ -153,7 +154,7 @@ function SharedChatView() {
     }
     const fetchBlocks = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/chats/${sharedData.share_id}/documents/${viewingDoc.doc_id}`);
+        const res = await fetch(`${API_BASE}/api/chats/${sharedData.share_id}/documents/${viewingDoc.doc_id}`);
         if (res.ok) {
           const docData = await res.json();
           setBlocks(docData.blocks || []);
@@ -378,7 +379,7 @@ export default function App() {
   const loadChats = async (selectId = null) => {
     try {
       const token = await user.getIdToken();
-      const response = await fetch("http://localhost:8000/api/chats", {
+      const response = await fetch(`${API_BASE}/api/chats`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -407,7 +408,7 @@ export default function App() {
     setLoadingAnalytics(true);
     try {
       const token = await user.getIdToken();
-      const res = await fetch("http://localhost:8000/api/analytics/token-usage", {
+      const res = await fetch(`${API_BASE}/api/analytics/token-usage`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -433,7 +434,7 @@ export default function App() {
     const fetchBlocks = async () => {
       try {
         const token = await user.getIdToken();
-        const res = await fetch(`http://localhost:8000/api/chats/${activeChatId}/documents/${viewingDoc.doc_id}`, {
+        const res = await fetch(`${API_BASE}/api/chats/${activeChatId}/documents/${viewingDoc.doc_id}`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }
@@ -456,7 +457,7 @@ export default function App() {
     
     try {
       const token = await user.getIdToken();
-      const response = await fetch("http://localhost:8000/api/chats", {
+      const response = await fetch(`${API_BASE}/api/chats`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -497,7 +498,7 @@ export default function App() {
     
     try {
       const token = await user.getIdToken();
-      const response = await fetch(`http://localhost:8000/api/chats/${chatIdToDelete}`, {
+      const response = await fetch(`${API_BASE}/api/chats/${chatIdToDelete}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -520,7 +521,7 @@ export default function App() {
     if (!activeChatId || !user) return;
     try {
       const token = await user.getIdToken();
-      const response = await fetch(`http://localhost:8000/api/chats/${activeChatId}/documents/${docIdToDelete}`, {
+      const response = await fetch(`${API_BASE}/api/chats/${activeChatId}/documents/${docIdToDelete}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -555,7 +556,7 @@ export default function App() {
 
     try {
       const token = await user.getIdToken();
-      const response = await fetch(`http://localhost:8000/api/chats/${activeChatId}/upload`, {
+      const response = await fetch(`${API_BASE}/api/chats/${activeChatId}/upload`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -603,7 +604,7 @@ export default function App() {
     if (!activeChatId || !user) return;
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`http://localhost:8000/api/chats/${activeChatId}/messages`, {
+      const res = await fetch(`${API_BASE}/api/chats/${activeChatId}/messages`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -644,7 +645,7 @@ export default function App() {
     if (!activeChatId || !user) return;
     try {
       const token = await user.getIdToken();
-      const response = await fetch(`http://localhost:8000/api/chats/${activeChatId}/share`, {
+      const response = await fetch(`${API_BASE}/api/chats/${activeChatId}/share`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`
