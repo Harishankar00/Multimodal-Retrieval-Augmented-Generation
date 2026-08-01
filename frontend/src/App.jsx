@@ -1319,23 +1319,16 @@ export default function App() {
               </div>
 
               {/* Scrollable Chat feed container */}
-              <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-                <div style={{
-                  maxWidth: "800px",
-                  margin: "0 auto",
-                  height: "100%",
-                  padding: "0 24px"
-                }}>
-                  <ChatPane
-                    chatId={activeChatId}
-                    docId={activeChatDocuments.length > 0 ? "active" : null}
-                    activeBlock={activeBlock}
-                    setActiveBlock={setActiveBlock}
-                    setActivePage={setActivePage}
-                    onViewDocument={handleViewDocument}
-                    activeChatDocuments={activeChatDocuments}
-                  />
-                </div>
+              <div style={{ flex: 1, overflow: "hidden", position: "relative", width: "100%" }}>
+                <ChatPane
+                  chatId={activeChatId}
+                  docId={activeChatDocuments.length > 0 ? "active" : null}
+                  activeBlock={activeBlock}
+                  setActiveBlock={setActiveBlock}
+                  setActivePage={setActivePage}
+                  onViewDocument={handleViewDocument}
+                  activeChatDocuments={activeChatDocuments}
+                />
               </div>
             </div>
           )}
